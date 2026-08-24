@@ -6,6 +6,9 @@ out
 dist
 *.tgz
 
+# wrangler local dev state
+.wrangler
+
 # code coverage
 coverage
 *.lcov
@@ -21,6 +24,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+.dev.vars
 
 # caches
 .eslintcache

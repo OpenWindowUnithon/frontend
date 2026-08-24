@@ -1,0 +1,8 @@
+# Cloudflare Pages Functions secrets (functions/api/*).
+# Copy to .dev.vars for local `wrangler pages dev`, and set the real values
+# in prod with `wrangler pages secret put <NAME>`. Never commit .dev.vars.
+
+LIVEKIT_API_KEY=
+LIVEKIT_API_SECRET=
+OPENAI_API_KEY=
+OPENAI_REALTIME_MODEL=gpt-realtime-2.1
