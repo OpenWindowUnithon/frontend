@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "ko-KR"
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "Draft"
+  path_filters:
+    - "!**/node_modules/**"
+    - "!bun.lock"
+    - "!dist/**"
+    - "!src/app/routeTree.gen.ts"
+  instructions: |
+    당신은 이 프로젝트의 프론트엔드 코드 리뷰어입니다. 아래 아키텍처와 컨벤션을 중점적으로 검토해 주세요:
+
+    1. Feature-Sliced Design (FSD) 아키텍처 준수:
+       - 레이어 계층: `app` → `pages` → `widgets` → `features` → `entities` → `shared`
+       - 레이어 간 의존성은 반드시 상위 레이어에서 하위 레이어로만 향해야 합니다 (하위에서 상위 import 금지).
+       - 동일 레이어 내의 슬라이스 간 상호 import는 금지됩니다 (`shared` 제외).
+       - 각 슬라이스의 내부 세그먼트는 `index.ts`를 통해 Public API로만 노출되어야 합니다.
+
+    2. 라이브러리 우선 원칙 (Hand-roll 금지):
+       - 폼/유효성 검사: `react-hook-form` + `zod` (`@hookform/resolvers/zod`)
+       - 서버 상태 관리: `@tanstack/react-query` (API 호출에 `useEffect` + `useState` 사용 금지)
+       - 클라이언트 UI 상태: `zustand`
+       - HTTP 통신: `shared/api`의 `apiClient` 사용 (개별 `axios.create()` 금지)
+       - 알림/토스트: `sonner` (`toast(...)`)
+       - 클래스 합성: `cn()` (`shared/lib/cn.ts`)
+       - 유틸리티: `es-toolkit` (debounce/throttle/groupBy 등 직접 구현 금지)
+       - 공통 훅: `usehooks-ts` (useLocalStorage, useDebounce, useMediaQuery 등 직접 구현 금지)
+       - UI 컴포넌트: `shadcn` / `Base UI` 기반
+
+    3. TanStack Router & React 19:
+       - 파일 기반 라우팅 규칙 준수 (`src/app/routes/`)
+       - React 19 및 모던 훅 패턴 준수
+
+    4. TypeScript & 코드 품질:
+       - 엄격한 타입 안정성 유지 (`any` 타입 지양, 타입 단언 최소화)
+       - Biome 린트 규칙과 일관된 클린 코드 작성
+
+chat:
+  auto_reply: true
