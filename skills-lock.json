@@ -19,6 +19,12 @@
 			"skillPath": "es-toolkit-plugin/skills/recommend/SKILL.md",
 			"computedHash": "635cf892797a95fb765fbb9c015b815e8704de5395401393938f54e60cc572fe"
 		},
+		"seed-design": {
+			"source": "daangn/seed-design",
+			"sourceType": "github",
+			"skillPath": "skills/seed-design/SKILL.md",
+			"computedHash": "418491829537d1d75de125b502c2e9cfeabb23f47b1dd80fb4265705ef5eca2c"
+		},
 		"shadcn": {
 			"source": "shadcn-ui/ui",
 			"sourceType": "github",
