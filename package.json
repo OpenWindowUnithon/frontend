@@ -13,6 +13,8 @@
 		"arch:lint": "steiger ./src",
 		"check": "bun run lint && bun run typecheck && bun run arch:lint",
 		"new:slice": "bun scripts/new-slice.ts",
+		"deploy": "bun run build && wrangler pages deploy dist",
+		"deploy:preview": "bun run build && wrangler pages deploy dist --branch=preview",
 		"prepare": "lefthook install"
 	},
 	"devDependencies": {
@@ -30,7 +32,8 @@
 		"shadcn": "^4.19.0",
 		"steiger": "^0.6.0",
 		"typescript": "^7.0.2",
-		"vite": "^8.2.2"
+		"vite": "^8.2.2",
+		"wrangler": "^4.125.0"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.7.0",
