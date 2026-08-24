@@ -13,7 +13,8 @@
 | debounce/throttle, groupBy/pick/omit, etc. | `es-toolkit`                                            |
 | common hooks (useLocalStorage, useDebounce, useMediaQuery, useClickOutside) | `usehooks-ts`                     |
 | accessible dialog/dropdown/tooltip/select/etc.        | `bunx shadcn@latest add <component>` — generates into `shared/ui`, built on Base UI. Never hand-roll a focus-trapped modal or a custom dropdown |
-| icons                                     | `lucide-react` (already shadcn's own default)            |
+| icons                                     | `lucide-react` for shadcn/Base UI primitives in `shared/ui` (already their default) — `@karrotmarket/react-monochrome-icon` / `-multicolor-icon` + `Icon`/`PrefixIcon`/`SuffixIcon` from `@seed-design/react` for SEED Design components |
+| SEED Design components (button, chip, snackbar, etc.) | `bunx @seed-design/cli@latest add ui:<component>` — generates into `shared/ui/seed-design`, import via the `seed-design/*` path alias. See `seed-design.json` for config |
 | env vars                                  | `shared/config/env.ts` — add to the zod schema before reading a new `VITE_*` var anywhere |
 
 If you're about to write a `debounce`, a manual fetch-loading-error

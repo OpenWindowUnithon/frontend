@@ -4,7 +4,8 @@
 	"compilerOptions": {
 		"baseUrl": ".",
 		"paths": {
-			"@/*": ["./src/*"]
+			"@/*": ["./src/*"],
+			"seed-design/*": ["./src/shared/ui/seed-design/*"]
 		}
 	}
 }

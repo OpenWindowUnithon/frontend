@@ -1,4 +1,5 @@
 import path from "node:path";
+import { seedDesignPlugin } from "@seed-design/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
@@ -16,11 +17,15 @@ export default defineConfig({
 		}),
 		react(),
 		tailwindcss(),
+		seedDesignPlugin(),
 	],
 	resolve: {
 		alias: {
 			"@": path.resolve(import.meta.dirname, "./src"),
 		},
+		// SEED React components resolve their layered CSS through this condition.
+		conditions: ["seed-layered"],
+		tsconfigPaths: true,
 	},
 	server: {
 		port: 3000,

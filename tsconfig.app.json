@@ -21,7 +21,8 @@
 		"noUncheckedIndexedAccess": true,
 
 		"paths": {
-			"@/*": ["./src/*"]
+			"@/*": ["./src/*"],
+			"seed-design/*": ["./src/shared/ui/seed-design/*"]
 		}
 	},
 	"include": ["src"]
