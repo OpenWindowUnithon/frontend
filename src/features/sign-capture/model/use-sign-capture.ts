@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
 import { useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
 import { composeSignSentence } from "../api/sign-api";
+import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
 	extractFeatures,
 	latestPoseLandmarks,
@@ -24,6 +25,7 @@ export function useSignCapture(room: Room | null) {
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
 	const [cameraError, setCameraError] = useState(false);
+	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
 
 	const windowRef = useRef(new RollingWindow());
 	const latestPoseRef = useRef<PoseLandmarkerResult | null>(null);
@@ -98,7 +100,10 @@ export function useSignCapture(room: Room | null) {
 		predictingRef.current = true;
 		predictSign(frames)
 			.then(({ label, confidence }) => {
-				const candidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+				const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+				// Words the trained model doesn't know (e.g. 병원/예약/도움) can still be
+				// recognized if the signer recorded reference samples for them below.
+				const candidate = lstmCandidate ?? matchReference(frames)?.word ?? null;
 
 				if (candidate === lastCandidateRef.current) {
 					candidateStreakRef.current += 1;
@@ -127,5 +132,20 @@ export function useSignCapture(room: Room | null) {
 			});
 	});
 
-	return { videoRef, recognizedText, cameraError };
+	// Records the last 30 captured frames as one reference sample for `word`.
+	// Returns false if the window hasn't filled yet (call again a moment later).
+	function recordReference(word: string): boolean {
+		const frames = windowRef.current.toArray();
+		if (!frames || !word.trim()) return false;
+		saveReference(word.trim(), frames);
+		setReferences(listReferences());
+		return true;
+	}
+
+	function removeReference(word: string) {
+		clearReference(word);
+		setReferences(listReferences());
+	}
+
+	return { videoRef, recognizedText, cameraError, references, recordReference, removeReference };
 }
