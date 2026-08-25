@@ -14,7 +14,7 @@
 		"check": "bun run lint && bun run typecheck && bun run arch:lint",
 		"new:slice": "bun scripts/new-slice.ts",
 		"deploy": "bun run build && wrangler pages deploy dist",
-		"deploy:preview": "bun run build && wrangler pages deploy dist --branch=preview",
+		"deploy:preview": "tsc -b && vite build --mode preview && wrangler pages deploy dist --branch=preview",
 		"prepare": "lefthook install"
 	},
 	"devDependencies": {
