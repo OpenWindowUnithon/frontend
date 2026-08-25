@@ -3,3 +3,4 @@ export { dayjs } from "./dayjs";
 export { connectRoom, onRoomText, sendRoomText } from "./livekit";
 export { SnackbarBridge, snackbar } from "./snackbar";
 export { useHandLandmarker } from "./use-hand-landmarker";
+export { usePoseLandmarker } from "./use-pose-landmarker";

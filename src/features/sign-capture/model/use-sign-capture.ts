@@ -1,34 +1,31 @@
-import type { HandLandmarkerResult } from "@mediapipe/tasks-vision";
-import { sample } from "es-toolkit";
+import type { HandLandmarkerResult, PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 import type { Room } from "livekit-client";
 import { useEffect, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
-import { useHandLandmarker } from "@/shared/lib";
+import { useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
+import {
+	extractFeatures,
+	latestPoseLandmarks,
+	RollingWindow,
+	splitHandsByHandedness,
+} from "./landmarks";
+import { CONFIDENCE_THRESHOLD, predictSign } from "./sign-model";
 
-const MOCK_PHRASES = [
-	"안녕하세요",
-	"만나서 반갑습니다",
-	"도와주세요",
-	"감사합니다",
-	"네, 알겠습니다",
-];
-const EMIT_INTERVAL_MS = 2500;
+const CONSECUTIVE_REQUIRED = 3;
+const NO_SIGN_STREAK_TO_RESET = 5;
 
-/**
- * Mock sign inference: no trained model yet, so this just samples a fixed
- * phrase whenever a hand has been in frame long enough. Swap the body for a
- * real "landmarks in, text out" model call later — the call site doesn't change.
- */
-function mockInferSign(): string {
-	return sample(MOCK_PHRASES);
-}
-
-/** Captures the local camera, runs Hand Landmarker on it, and publishes recognized text as captions. */
+/** Captures the local camera, runs Hand+Pose Landmarker on it, and sends recognized text as chat. */
 export function useSignCapture(room: Room | null) {
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
 	const [cameraError, setCameraError] = useState(false);
-	const lastEmitRef = useRef(0);
+
+	const windowRef = useRef(new RollingWindow());
+	const latestPoseRef = useRef<PoseLandmarkerResult | null>(null);
+	const lastCandidateRef = useRef<string | null>(null);
+	const candidateStreakRef = useRef(0);
+	const insertedForSegmentRef = useRef(false);
+	const predictingRef = useRef(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -50,15 +47,50 @@ export function useSignCapture(room: Room | null) {
 		};
 	}, []);
 
-	useHandLandmarker(videoRef, room !== null, (result: HandLandmarkerResult) => {
-		if (!room || result.landmarks.length === 0) return;
-		const now = performance.now();
-		if (now - lastEmitRef.current < EMIT_INTERVAL_MS) return;
-		lastEmitRef.current = now;
+	usePoseLandmarker(videoRef, room !== null, (result: PoseLandmarkerResult) => {
+		latestPoseRef.current = result;
+	});
 
-		const text = mockInferSign();
-		setRecognizedText(text);
-		sendChatText(room, text);
+	useHandLandmarker(videoRef, room !== null, (handResult: HandLandmarkerResult) => {
+		const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
+		const poseLandmarks = latestPoseLandmarks(latestPoseRef.current);
+		windowRef.current.push(
+			extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
+		);
+
+		const frames = windowRef.current.toArray();
+		if (!frames || predictingRef.current) return;
+
+		predictingRef.current = true;
+		predictSign(frames)
+			.then(({ label, confidence }) => {
+				const candidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+
+				if (candidate === lastCandidateRef.current) {
+					candidateStreakRef.current += 1;
+				} else {
+					lastCandidateRef.current = candidate;
+					candidateStreakRef.current = 1;
+				}
+
+				if (candidate === null && candidateStreakRef.current >= NO_SIGN_STREAK_TO_RESET) {
+					insertedForSegmentRef.current = false;
+				}
+
+				if (
+					room &&
+					candidate &&
+					candidateStreakRef.current >= CONSECUTIVE_REQUIRED &&
+					!insertedForSegmentRef.current
+				) {
+					insertedForSegmentRef.current = true;
+					setRecognizedText(candidate);
+					sendChatText(room, candidate);
+				}
+			})
+			.finally(() => {
+				predictingRef.current = false;
+			});
 	});
 
 	return { videoRef, recognizedText, cameraError };
