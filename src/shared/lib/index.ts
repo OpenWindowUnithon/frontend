@@ -10,3 +10,4 @@ export {
 	type UseHandLandmarkerReturn,
 	useHandLandmarker,
 } from "./use-hand-landmarker";
+export { usePoseLandmarker } from "./use-pose-landmarker";
