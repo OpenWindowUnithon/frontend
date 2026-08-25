@@ -384,9 +384,9 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
  * this is embedded in an actual call, where a caller supplies `onSentence` and renders the
  * composed sentences in the call's own chat feed instead.
  *
- * `pip` goes further: it's the bare mirrored video feed with no overlay chrome at all (no
- * status bar, toggle buttons, or skeleton/HUD), meant to float as a small picture-in-picture
- * window over the call's chat so the chat gets the full screen.
+ * `pip` goes further: it's the mirrored video feed plus the hand/pose landmark skeleton overlay,
+ * with no other chrome at all (no status bar, toggle buttons, or HUD) -- meant to float as a
+ * small picture-in-picture window over the call's chat so the chat gets the full screen.
  */
 export function SignCaptureView({
 	room = null,
