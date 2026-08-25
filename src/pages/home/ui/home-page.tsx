@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import {
 	Button,
 	Dialog,
@@ -7,11 +8,10 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/shared/ui";
-import { TodoBoard } from "@/widgets/todo-board";
 
 export function HomePage() {
 	return (
-		<main className="flex min-h-screen flex-col items-center gap-8 p-8">
+		<main className="flex min-h-screen flex-col items-center justify-center gap-8 p-8">
 			<div className="flex items-center gap-2">
 				<h1 className="text-2xl font-bold">Hackathon Template</h1>
 				<Dialog>
@@ -29,7 +29,9 @@ export function HomePage() {
 					</DialogContent>
 				</Dialog>
 			</div>
-			<TodoBoard />
+			<Link to="/lobby">
+				<Button size="md">통화 시작하기</Button>
+			</Link>
 		</main>
 	);
 }

@@ -1,17 +1,18 @@
 # features
 
 One user-facing **action** per slice — a verb, not a noun
-(`add-todo`, `like-post`, `auth-by-email`). A feature wraps an entity's data
+(`join-call`, `like-post`, `auth-by-email`). A feature wraps an entity's data
 operation with everything needed to actually perform it from the UI: the
-form/button, the mutation hook, and the side effects (toast, redirect,
-cache invalidation).
+form/button, the mutation or connection hook, and the side effects (toast,
+redirect, cache invalidation).
 
 ## Segments
 
 - `ui/` — the interactive component (usually a form or a button).
-- `model/` — the hook orchestrating the mutation/query + side effects
-  (see `add-todo/model/use-create-todo.ts` for the pattern: mutate →
-  invalidate the entity's query key → toast).
+- `model/` — the hook orchestrating the action + side effects (see
+  `join-call/model/use-join-call.ts` for the pattern: fetch → connect →
+  expose status; or a TanStack Query mutation would go mutate → invalidate
+  the entity's query key → toast).
 - `api/` — only if this feature needs a request the entity doesn't already
   expose. Default to reusing the entity's `api/`; don't duplicate a fetch
   call here.

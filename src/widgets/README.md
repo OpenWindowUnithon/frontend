@@ -2,7 +2,7 @@
 
 Large, self-contained, composite UI blocks that combine multiple
 `features`/`entities` into one reusable section (a full navbar, a dashboard
-panel, the `todo-board` in this template). The point of pulling something
+panel, the `call-room` in this template). The point of pulling something
 out as a widget is the **isolation boundary**, not raw reuse count — a
 widget used on a single page today is still worth it if it bundles enough
 moving parts to deserve its own name and folder.
@@ -26,4 +26,4 @@ Enforced by `steiger` (`fsd/no-cross-imports`, `fsd/no-higher-level-imports`)
 ## Naming
 
 kebab-case, named for what it is, not the page it happens to live on right
-now: `todo-board`, not `home-page-section`.
+now: `call-room`, not `home-page-section`.
