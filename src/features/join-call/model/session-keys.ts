@@ -15,3 +15,11 @@ export function getOrCreateSessionKey(prefix: "creator" | "participant", roomCod
 	sessionStorage.setItem(key, created);
 	return created;
 }
+
+export function setSessionKey(
+	prefix: "creator" | "participant",
+	roomCode: string,
+	value: string,
+): void {
+	sessionStorage.setItem(storageKey(prefix, roomCode), value);
+}

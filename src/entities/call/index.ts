@@ -1,10 +1,13 @@
 export {
 	acceptCall,
 	createCall,
+	createOutgoingCall,
 	disconnectCall,
 	endCall,
 	getCallStatus,
+	getIncomingCall,
 	joinCall,
+	registerPhone,
 	rejectCall,
 	sendHeartbeat,
 } from "./api/call-api";
@@ -20,8 +23,13 @@ export {
 	callRoleSchema,
 	callStatusSchema,
 	communicationModeSchema,
+	type IncomingCall,
+	incomingCallSchema,
 	type JoinResult,
 	joinResultSchema,
+	type OutgoingCall,
+	outgoingCallSchema,
+	phoneRegistrationSchema,
 	type StatusResult,
 	statusResultSchema,
 } from "./model/types";

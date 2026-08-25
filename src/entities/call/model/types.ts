@@ -40,3 +40,26 @@ export const statusResultSchema = z.object({
 	mode: callModeSchema.nullish(),
 });
 export type StatusResult = z.infer<typeof statusResultSchema>;
+
+export const phoneRegistrationSchema = z.object({
+	phoneNumber: z.string().regex(/^01\d{8,9}$/),
+});
+
+export const outgoingCallSchema = z.object({
+	callId: z.string(),
+	roomCode: z.string(),
+	status: z.literal("RINGING"),
+	role: z.literal("CALLER"),
+});
+export type OutgoingCall = z.infer<typeof outgoingCallSchema>;
+
+export const incomingCallSchema = z.object({
+	callId: z.string(),
+	roomCode: z.string(),
+	callerPhone: z.string(),
+	calleePhone: z.string(),
+	callerMode: callModeSchema,
+	status: z.literal("RINGING"),
+	createdAt: z.string(),
+});
+export type IncomingCall = z.infer<typeof incomingCallSchema>;
