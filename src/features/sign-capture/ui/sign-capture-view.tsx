@@ -442,6 +442,10 @@ export function SignCaptureView({
 				>
 					<track kind="captions" />
 				</video>
+				<canvas
+					ref={canvasRef}
+					className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+				/>
 				{(!isCameraActive || cameraError) && (
 					<div className="absolute inset-0 flex items-center justify-center bg-neutral-950/90">
 						<CameraOff className="h-6 w-6 text-neutral-600" aria-hidden />
