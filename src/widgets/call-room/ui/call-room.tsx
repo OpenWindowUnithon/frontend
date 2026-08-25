@@ -16,7 +16,12 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { type CallMode, type CommunicationMode, sendChatText } from "@/entities/call";
+import {
+	type CallMode,
+	type CommunicationMode,
+	getCallPreferences,
+	sendChatText,
+} from "@/entities/call";
 import { Caption } from "@/entities/caption";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
 import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
@@ -102,8 +107,8 @@ function TextCall({
 	setMessages: Dispatch<SetStateAction<TextMessage[]>>;
 }) {
 	const inputRef = useRef<HTMLTextAreaElement>(null);
-	const scrollRef = useRef<HTMLDivElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
+	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
 	const captionTimes = useRef(new Map<string, number>());
 	for (const caption of captions) {
 		if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
@@ -119,11 +124,9 @@ function TextCall({
 	const timelineVersion = `${timeline.length}:${captions.at(-1)?.text ?? ""}`;
 
 	useEffect(() => {
-		if (!timelineVersion) return;
-		const container = scrollRef.current;
-		if (!container) return;
-		const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-		if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+		if (timelineVersion && autoScroll.current) {
+			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+		}
 	}, [timelineVersion]);
 
 	const deliver = async (text: string, existingId?: number) => {
@@ -151,7 +154,6 @@ function TextCall({
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<div
-				ref={scrollRef}
 				className="min-h-40 flex-1 space-y-3 overflow-y-auto px-5 pb-4 pt-6"
 				aria-label="통화 대화"
 				aria-live="polite"

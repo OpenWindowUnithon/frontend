@@ -8,8 +8,13 @@ export async function connectRoom(url: string, token: string): Promise<Room> {
 }
 
 /** Sends text on a topic via LiveKit's text stream API (not a raw data channel — matches the backend agent's contract). */
-export function sendRoomText(room: Room, topic: string, text: string) {
-	return room.localParticipant.sendText(text, { topic });
+export function sendRoomText(
+	room: Room,
+	topic: string,
+	text: string,
+	attributes?: Record<string, string>,
+) {
+	return room.localParticipant.sendText(text, { topic, attributes });
 }
 
 /** Subscribes to text sent on a topic. Returns an unsubscribe function. */
