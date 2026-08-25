@@ -1,26 +1,33 @@
-// v2: references are now stored body-relative (see normalizeFrame) instead of raw
-// screen-space coordinates. v1 references would silently mismatch under the new
-// normalization, so this bumps the key and effectively starts everyone fresh --
-// re-record any custom words after this ships.
-const STORAGE_KEY = "naru-sign-references-v2";
+import { apiClient } from "@/shared/api";
+
 const MAX_SAMPLES_PER_WORD = 10;
-// Starting point -- tune against real recordings. Distances are now body-relative
-// (shoulder-width units), so this is unrelated to the old v1 threshold's scale.
+// Starting point -- tune against real recordings. Distances are body-relative
+// (shoulder-width units).
 export const DEFAULT_DTW_THRESHOLD = 0.6;
 
 type ReferenceStore = Record<string, number[][][]>;
 
-// Reference sequences never leave the browser: no server call, no upload.
-function loadReferences(): ReferenceStore {
-	try {
-		return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
-	} catch {
-		return {};
-	}
+// Reference samples are global now (see backend PR: com.ssu.unithon.sign.domain.SignWordReference)
+// -- there's no per-user auth in this app, so a word one signer records becomes recognizable
+// for everyone. DTW matching runs client-side on every video frame (15-30x/second), so it
+// cannot be a network call -- this in-memory cache is the thing actually queried per frame,
+// refreshed from the server on load and kept in sync optimistically on save/delete.
+let cache: ReferenceStore = {};
+
+/** Fetches the full reference store from the server and refreshes the in-memory matching cache. Call once on mount; recognition uses the cache, not the network, per frame. */
+export async function loadReferencesFromServer(): Promise<Record<string, number>> {
+	const { data } = await apiClient.get<ReferenceStore>("/api/sign-language/references");
+	cache = data;
+	return countsFromCache();
 }
 
-function persist(store: ReferenceStore) {
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+function countsFromCache(): Record<string, number> {
+	return Object.fromEntries(Object.entries(cache).map(([word, samples]) => [word, samples.length]));
+}
+
+/** word -> saved sample count, for display in the recording UI. Reads the in-memory cache -- call loadReferencesFromServer first to populate it. */
+export function listReferences(): Record<string, number> {
+	return countsFromCache();
 }
 
 // Layout matches landmarks.ts's extractFeatures: pose is 6 landmarks x [x,y,z,visibility]
@@ -62,27 +69,19 @@ function normalizeSequence(frames: number[][]): number[][] {
 	return frames.map(normalizeFrame);
 }
 
-/** Stores one 30-frame landmark sample as a reference for `word`. Returns the sample count for that word. */
-export function saveReference(word: string, sequence: number[][]): number {
-	const store = loadReferences();
-	const samples = [...(store[word] ?? []), normalizeSequence(sequence)].slice(
-		-MAX_SAMPLES_PER_WORD,
-	);
-	store[word] = samples;
-	persist(store);
-	return samples.length;
+/** Replaces `word`'s entire reference set on the server with `samples` (each a raw, un-normalized landmark sequence) and updates the in-memory matching cache to match. A take is meant to supersede whatever was recorded before, not accumulate alongside it. */
+export async function replaceReferenceSamples(word: string, samples: number[][][]): Promise<void> {
+	const normalized = samples.map(normalizeSequence).slice(-MAX_SAMPLES_PER_WORD);
+	await apiClient.put(`/api/sign-language/references/${encodeURIComponent(word)}`, {
+		samples: normalized,
+	});
+	cache = { ...cache, [word]: normalized };
 }
 
-export function clearReference(word: string) {
-	const store = loadReferences();
-	delete store[word];
-	persist(store);
-}
-
-/** word -> saved sample count, for display in the recording UI. */
-export function listReferences(): Record<string, number> {
-	const store = loadReferences();
-	return Object.fromEntries(Object.entries(store).map(([word, samples]) => [word, samples.length]));
+export async function deleteReference(word: string): Promise<void> {
+	await apiClient.delete(`/api/sign-language/references/${encodeURIComponent(word)}`);
+	const { [word]: _removed, ...rest } = cache;
+	cache = rest;
 }
 
 function frameDistance(a: number[], b: number[]): number {
@@ -130,18 +129,20 @@ export interface DtwMatch {
 	distance: number;
 }
 
-/** Finds the closest saved reference to `sequence` (raw, un-normalized), or null if nothing is within threshold. */
-export function matchReference(
-	sequence: number[][],
-	threshold = DEFAULT_DTW_THRESHOLD,
-): DtwMatch | null {
-	const store = loadReferences();
+/**
+ * Finds the closest saved reference to `sequence` (raw, un-normalized), regardless of
+ * distance -- confirmation is unconditional (use-sign-capture.ts), so this is the only
+ * lookup recognition needs; DEFAULT_DTW_THRESHOLD is used only to scale the display
+ * similarity, not to gate this. Reads the in-memory cache synchronously (no network call)
+ * since this runs every video frame.
+ */
+export function closestReference(sequence: number[][]): DtwMatch | null {
 	const normalized = normalizeSequence(sequence);
 	let best: DtwMatch | null = null;
-	for (const [word, samples] of Object.entries(store)) {
+	for (const [word, samples] of Object.entries(cache)) {
 		for (const sample of samples) {
 			const distance = dtwDistance(normalized, sample);
-			if (distance <= threshold && (!best || distance < best.distance)) {
+			if (!best || distance < best.distance) {
 				best = { word, distance };
 			}
 		}

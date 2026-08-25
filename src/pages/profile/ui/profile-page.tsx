@@ -17,6 +17,7 @@ import {
 	setCallPreferences,
 	setMyPhone,
 } from "@/entities/call";
+import { SignCaptureView } from "@/features/sign-capture";
 import { snackbar } from "@/shared/lib";
 import {
 	ActionButton,
@@ -57,6 +58,7 @@ export function ProfilePage() {
 	const topBar = useCompactTopBar();
 	const [phone, setPhone] = useState(getMyPhone);
 	const [preferences, setPreferencesState] = useState(getCallPreferences);
+	const [showSignTraining, setShowSignTraining] = useState(false);
 	const updatePreference = <Key extends keyof CallPreferences>(
 		key: Key,
 		value: CallPreferences[Key],
@@ -171,6 +173,28 @@ export function ProfilePage() {
 							]}
 						/>
 					</List>
+				</div>
+				<div className="mt-10 px-4">
+					<ListHeader as="h2" variant="boldSolid">
+						수어 단어 학습
+					</ListHeader>
+					<p className="mt-1 text-muted-foreground text-sm">
+						모델에 없는 수어 단어를 카메라로 직접 녹화해서 등록할 수 있어요. 등록한 단어는 모든
+						사용자에게 공유돼요.
+					</p>
+					<ActionButton
+						className="mt-4 w-full"
+						size="large"
+						variant="neutralOutline"
+						onClick={() => setShowSignTraining((prev) => !prev)}
+					>
+						{showSignTraining ? "카메라 닫기" : "카메라로 단어 학습하기"}
+					</ActionButton>
+					{showSignTraining && (
+						<div className="mt-4 flex justify-center">
+							<SignCaptureView room={null} />
+						</div>
+					)}
 				</div>
 			</section>
 			<PhoneNav current="profile" />
