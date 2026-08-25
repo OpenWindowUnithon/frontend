@@ -1,10 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import { getDeviceKey, getMyPhone, getRecentCalls } from "@/entities/call";
+import { getDeviceKey, getMyPhone, getRecentCalls, type RecentCall } from "@/entities/call";
+import { IdentityPlaceholder, List, ListDivider, ListItem, SeedAvatar } from "@/shared/ui";
 import { PhoneNav } from "@/widgets/phone-nav";
 
 function formatPhone(value: string) {
 	return value.replace(/^(\d{3})(\d{3,4})(\d{4})$/, "$1 $2 $3");
 }
+
+const STATUS_LABEL = {
+	CREATED: "연결 준비",
+	RINGING: "연결 중",
+	ACTIVE: "통화 연결",
+	REJECTED: "응답 없음",
+	ENDED: "통화 종료",
+} as const;
 
 export function RecentPage() {
 	const registered = /^01\d{8,9}$/.test(getMyPhone());
@@ -24,37 +33,49 @@ export function RecentPage() {
 				{recent.data?.length === 0 && (
 					<p className="mt-8 text-muted-foreground">최근 통화가 없어요.</p>
 				)}
-				<ul className="mt-6 divide-y">
-					{recent.data?.map((call) => (
-						<li className="flex items-center justify-between py-4" key={call.callId}>
-							<div>
-								<p className="text-lg font-semibold">{formatPhone(call.peerPhone)}</p>
-								<p className="mt-1 text-sm text-muted-foreground">
-									{call.direction === "OUTGOING" ? "발신" : "수신"} · {call.status}
-								</p>
-							</div>
-							<div className="text-right text-sm text-muted-foreground">
-								<p>
-									{call.startedAt
-										? new Date(call.startedAt).toLocaleString("ko-KR", {
-												month: "numeric",
-												day: "numeric",
-												hour: "numeric",
-												minute: "2-digit",
-											})
-										: "-"}
-								</p>
-								{call.durationSeconds != null && (
-									<p className="mt-1">
-										{Math.floor(call.durationSeconds / 60)}분 {call.durationSeconds % 60}초
-									</p>
-								)}
-							</div>
-						</li>
+				<List className="mt-6">
+					{recent.data?.map((call, index) => (
+						<RecentCallItem
+							key={call.callId}
+							call={call}
+							showDivider={index < recent.data.length - 1}
+						/>
 					))}
-				</ul>
+				</List>
 			</section>
 			<PhoneNav current="recent" />
 		</main>
+	);
+}
+
+function RecentCallItem({ call, showDivider }: { call: RecentCall; showDivider: boolean }) {
+	const time = call.startedAt
+		? new Date(call.startedAt).toLocaleString("ko-KR", {
+				month: "numeric",
+				day: "numeric",
+				hour: "numeric",
+				minute: "2-digit",
+			})
+		: "-";
+	const duration =
+		call.durationSeconds == null
+			? null
+			: `${Math.floor(call.durationSeconds / 60)}분 ${call.durationSeconds % 60}초`;
+
+	return (
+		<>
+			<ListItem
+				prefix={<SeedAvatar size="48" fallback={<IdentityPlaceholder />} />}
+				title={formatPhone(call.peerPhone)}
+				detail={`${call.direction === "OUTGOING" ? "발신" : "수신"} · ${STATUS_LABEL[call.status]}`}
+				suffix={
+					<div className="text-right text-sm text-muted-foreground">
+						<p>{time}</p>
+						{duration && <p className="mt-1">{duration}</p>}
+					</div>
+				}
+			/>
+			{showDivider && <ListDivider />}
+		</>
 	);
 }
