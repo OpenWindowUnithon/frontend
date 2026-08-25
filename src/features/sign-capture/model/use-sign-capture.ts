@@ -74,7 +74,7 @@ export interface UseSignCaptureReturn {
 // candidate to win a few frames in a row filters that transitional noise out before it's
 // treated as a real confirmation, without adding perceptible lag once a sign is actually
 // being held. See updateCandidateStreak.
-const REQUIRED_STREAK = 3;
+const REQUIRED_STREAK = 5;
 // How many consecutive no-hands frames before the "already confirmed" guard clears, letting
 // the same word be confirmed again on a later, separate signing of it. Needs to be longer
 // than a typical brief tracking dropout mid-gesture (fast motion, hand grazing frame edge),
@@ -111,8 +111,17 @@ const RECORD_TOTAL_SECONDS = RECORD_REPS * REP_INTERVAL_SECONDS;
 const MIN_SEGMENT_FRAMES = 5;
 
 interface ResolvedPrediction {
+	// Threshold-gated -- null unless the closest reference actually clears DEFAULT_DTW_THRESHOLD.
+	// This is the only value handleKslPrediction/updateCandidateStreak ever sees, so an idle
+	// hand (in frame but not forming any registered sign) can't get matched to "whichever word
+	// happens to be least-far-away" and confirmed anyway.
 	candidate: string | null;
 	confidence: number;
+	// Whichever reference is nearest, regardless of threshold -- purely for the always-on
+	// "인식 중" live card (buildActiveSignFromClosest), so the signer can see "this is what
+	// it's closest to" even when it's not close enough to confirm.
+	closestWord: string | null;
+	closestSimilarity: number;
 	debug: RecognitionDebug;
 }
 
@@ -127,18 +136,23 @@ interface ResolvedPrediction {
 // snapshot alongside the result -- pulled out of handleLandmarkerResult to keep that
 // callback's cognitive complexity down.
 //
-// Unconditional: whichever registered word is closest is the candidate, with no distance
-// threshold gating confirmation -- once at least one word is registered there's no "nothing
-// recognized" state (only handleLandmarkerResult's hands-not-detected check produces a null
-// candidate). DEFAULT_DTW_THRESHOLD is used only to scale the debug/display similarity
-// percentage, not to accept or reject a match.
+// Confirmation is threshold-gated: a resting hand, a transition between two signs, or just
+// raising your hand back into frame will always be *closest* to some registered word (DTW
+// always returns a nearest neighbor), but that doesn't mean it resembles it -- without a
+// distance cutoff, any hand presence gets matched to and confirms *something* almost
+// immediately (see REQUIRED_STREAK). DEFAULT_DTW_THRESHOLD gates `candidate`; the live card
+// still shows the closest match unconditionally via `closestWord` so the signer gets feedback
+// even on a near-miss.
 function resolvePrediction(frames: number[][]): ResolvedPrediction {
 	const dtwBest = closestReference(frames);
-	const similarity = dtwBest ? Math.max(0, 1 - dtwBest.distance / DEFAULT_DTW_THRESHOLD) : 0;
+	const closestSimilarity = dtwBest ? Math.max(0, 1 - dtwBest.distance / DEFAULT_DTW_THRESHOLD) : 0;
+	const dtwMatch = dtwBest && dtwBest.distance <= DEFAULT_DTW_THRESHOLD ? dtwBest : null;
 
 	return {
-		candidate: dtwBest?.word ?? null,
-		confidence: similarity,
+		candidate: dtwMatch?.word ?? null,
+		confidence: dtwMatch ? closestSimilarity : 0,
+		closestWord: dtwBest?.word ?? null,
+		closestSimilarity,
 		debug: {
 			dtwWord: dtwBest?.word ?? null,
 			dtwDistance: dtwBest?.distance ?? null,
@@ -426,7 +440,24 @@ export function useSignCapture(
 	// both hands have been gone for HANDS_GONE_FLUSH_MS (see handleLandmarkerResult), not on a
 	// timer per word. Clears the buffer immediately so a word signed while this request is in
 	// flight starts a fresh utterance instead of being resent with the old one.
+	//
+	// Also resets every piece of per-utterance recognition state -- the rolling frame window,
+	// the confirmation streak/lock, the live sign, and the recognized-text readout -- so the
+	// next utterance starts from a clean slate. Without this, raising hands back up to start a
+	// new sentence could immediately re-confirm whatever was last recognized (stale frames
+	// still in the window, or the confirmation lock already cleared from the hands-gone gap),
+	// silently duplicating the just-sent sentence.
 	const sendUtteranceNow = useCallback(() => {
+		windowRef.current.clear();
+		predictionStateRef.current = {
+			lastCandidate: null,
+			candidateStreak: 0,
+			lastConfirmedCandidate: null,
+		};
+		setActiveSign(null);
+		setRecognitionDebug(null);
+		setRecognizedText(null);
+
 		const words = [...wordBufferRef.current];
 		wordBufferRef.current = [];
 		setWordBuffer([]);
@@ -581,13 +612,14 @@ export function useSignCapture(
 			const frames = windowRef.current.toArray();
 			if (!frames) return;
 
-			const { candidate, confidence, debug } = resolvePrediction(frames);
+			const { candidate, confidence, closestWord, closestSimilarity, debug } =
+				resolvePrediction(frames);
 			setRecognitionDebug(debug);
 			// Always show the closest match as a live card, however low the similarity -- lets
-			// the signer see "this is what it thinks you're doing." Confirmation into the
-			// sentence buffer is unconditional too (see resolvePrediction), so this is also
-			// exactly what's about to be added to the word list.
-			setActiveSign(buildActiveSignFromClosest(candidate, confidence));
+			// the signer see "this is what it thinks you're doing," even when it isn't close
+			// enough to actually confirm (see resolvePrediction -- `candidate` is threshold-gated,
+			// `closestWord` isn't).
+			setActiveSign(buildActiveSignFromClosest(closestWord, closestSimilarity));
 
 			handleKslPrediction(candidate, confidence);
 		},
