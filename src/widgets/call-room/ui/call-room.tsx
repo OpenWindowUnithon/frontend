@@ -27,6 +27,7 @@ import { AgentAudioPlayer } from "@/features/play-agent-audio";
 import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
 import { MicToggleButton } from "@/features/toggle-mic";
+import { snackbar } from "@/shared/lib";
 import { ActionButton, TextField, TextFieldTextarea } from "@/shared/ui";
 
 interface CallRoomProps {
@@ -148,6 +149,7 @@ function TextCall({
 			setMessages((items) =>
 				items.map((item) => (item.id === id ? { ...item, state: "failed" } : item)),
 			);
+			snackbar.error("메시지를 전달하지 못했어요.");
 		}
 	};
 
@@ -175,7 +177,6 @@ function TextCall({
 								</p>
 								{item.message.state === "failed" && (
 									<div className="mt-3 border-t border-background/30 pt-3">
-										<p className="mb-2 text-sm text-background/80">전달하지 못했어요</p>
 										<ActionButton
 											variant="neutralOutline"
 											size="large"
@@ -328,19 +329,17 @@ function HearingRoom({ room }: { room: Room }) {
 export function CallRoom(props: CallRoomProps) {
 	const [ended, setEnded] = useState(false);
 	const [ending, setEnding] = useState(false);
-	const [endError, setEndError] = useState(false);
 	const communication = props.communication;
 	const [textDraft, setTextDraft] = useState("");
 	const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
 	const captions = useReceiveCaptions(props.room);
 	const endCall = async () => {
 		setEnding(true);
-		setEndError(false);
 		try {
 			await props.onEnd();
 			setEnded(true);
 		} catch {
-			setEndError(true);
+			snackbar.error("통화를 종료하지 못했어요. 다시 시도해 주세요.");
 		} finally {
 			setEnding(false);
 		}
@@ -357,11 +356,6 @@ export function CallRoom(props: CallRoomProps) {
 						ending={ending}
 					/>
 				</section>
-				{endError && (
-					<p className="px-5 py-2 text-center text-sm text-destructive" role="alert">
-						통화를 종료하지 못했어요. 다시 시도해 주세요.
-					</p>
-				)}
 				<HearingRoom room={props.room} />
 			</main>
 		);
@@ -382,11 +376,6 @@ export function CallRoom(props: CallRoomProps) {
 						ending={ending}
 					/>
 				</section>
-			)}
-			{endError && (
-				<p className="px-5 py-2 text-center text-sm text-destructive" role="alert">
-					통화를 종료하지 못했어요. 다시 시도해 주세요.
-				</p>
 			)}
 			{communication === "TEXT" ? (
 				<TextCall

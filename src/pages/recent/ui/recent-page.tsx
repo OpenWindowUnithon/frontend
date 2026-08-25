@@ -1,7 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
-import { getDeviceKey, getMyPhone, getRecentCalls, type RecentCall } from "@/entities/call";
-import { IdentityPlaceholder, List, ListDivider, ListItem, SeedAvatar } from "@/shared/ui";
-import { PageTopBar } from "@/widgets/page-top-bar";
+import { Text } from "@seed-design/react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import {
+	createOutgoingCall,
+	getCallPreferences,
+	getDeviceKey,
+	getMyPhone,
+	getRecentCalls,
+	type RecentCall,
+	registerPhone,
+} from "@/entities/call";
+import { setSessionKey } from "@/features/join-call";
+import { snackbar } from "@/shared/lib";
+import { IdentityPlaceholder, List, ListButtonItem, ListDivider, SeedAvatar } from "@/shared/ui";
+import { PageTopBar, useCompactTopBar } from "@/widgets/page-top-bar";
 import { PhoneNav } from "@/widgets/phone-nav";
 
 function formatPhone(value: string) {
@@ -17,16 +29,50 @@ const STATUS_LABEL = {
 } as const;
 
 export function RecentPage() {
-	const registered = /^01\d{8,9}$/.test(getMyPhone());
+	const topBar = useCompactTopBar();
+	const navigate = useNavigate();
+	const deviceKey = getDeviceKey();
+	const myPhone = getMyPhone().replace(/\D/g, "");
+	const registered = /^01\d{8,9}$/.test(myPhone);
 	const recent = useQuery({
-		queryKey: ["recent-calls", getDeviceKey()],
-		queryFn: () => getRecentCalls(getDeviceKey()),
+		queryKey: ["recent-calls", deviceKey],
+		queryFn: () => getRecentCalls(deviceKey),
 		enabled: registered,
 	});
+	const outgoing = useMutation({
+		mutationFn: async (peerPhone: string) => {
+			const calleePhone = peerPhone.replace(/\D/g, "");
+			await registerPhone(myPhone, deviceKey);
+			const creatorKey = crypto.randomUUID();
+			const call = await createOutgoingCall(myPhone, calleePhone, "DEAF", deviceKey, creatorKey);
+			setSessionKey("creator", call.roomCode, creatorKey);
+			setSessionKey("participant", call.roomCode, deviceKey);
+			return { call, peerPhone: calleePhone };
+		},
+		onSuccess: ({ call, peerPhone }) => {
+			navigate({
+				to: "/call",
+				search: {
+					room: call.roomCode,
+					mode: "DEAF",
+					communication: getCallPreferences().defaultCommunication,
+					contactName: formatPhone(peerPhone),
+					phone: formatPhone(peerPhone),
+				},
+			});
+		},
+		onError: () => snackbar.error("전화를 걸지 못했어요. 잠시 후 다시 시도해 주세요."),
+	});
 	return (
-		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
-			<PageTopBar title="최근 통화" />
-			<section className="min-h-0 flex-1 overflow-y-auto pt-6 pb-6">
+		<main className="relative mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
+			<PageTopBar title="최근 통화" visible={topBar.visible} />
+			<section
+				className="min-h-0 flex-1 overflow-y-auto pt-[calc(2.5rem+env(safe-area-inset-top))] pb-6"
+				onScroll={topBar.onScroll}
+			>
+				<Text as="h1" textStyle="screenTitle">
+					최근 통화
+				</Text>
 				{!registered && (
 					<p className="mt-8 text-muted-foreground">나의 정보에서 전화번호를 먼저 등록해 주세요.</p>
 				)}
@@ -40,6 +86,8 @@ export function RecentPage() {
 							key={call.callId}
 							call={call}
 							showDivider={index < recent.data.length - 1}
+							disabled={outgoing.isPending}
+							onCall={() => outgoing.mutate(call.peerPhone)}
 						/>
 					))}
 				</List>
@@ -49,7 +97,17 @@ export function RecentPage() {
 	);
 }
 
-function RecentCallItem({ call, showDivider }: { call: RecentCall; showDivider: boolean }) {
+function RecentCallItem({
+	call,
+	showDivider,
+	disabled,
+	onCall,
+}: {
+	call: RecentCall;
+	showDivider: boolean;
+	disabled: boolean;
+	onCall: () => void;
+}) {
 	const time = call.startedAt
 		? new Date(call.startedAt).toLocaleString("ko-KR", {
 				month: "numeric",
@@ -65,10 +123,13 @@ function RecentCallItem({ call, showDivider }: { call: RecentCall; showDivider: 
 
 	return (
 		<>
-			<ListItem
+			<ListButtonItem
 				prefix={<SeedAvatar size="48" fallback={<IdentityPlaceholder />} />}
 				title={formatPhone(call.peerPhone)}
 				detail={`${call.direction === "OUTGOING" ? "발신" : "수신"} · ${STATUS_LABEL[call.status]}`}
+				disabled={disabled}
+				onClick={onCall}
+				aria-label={`${formatPhone(call.peerPhone)}에게 전화 걸기`}
 				suffix={
 					<div className="text-right text-sm text-muted-foreground">
 						<p>{time}</p>

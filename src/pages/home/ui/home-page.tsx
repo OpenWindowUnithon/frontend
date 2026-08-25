@@ -13,7 +13,7 @@ import {
 	registerPhone,
 } from "@/entities/call";
 import { setSessionKey } from "@/features/join-call";
-import { isLocalOrPreview } from "@/shared/lib";
+import { isLocalOrPreview, snackbar } from "@/shared/lib";
 import { ActionButton } from "@/shared/ui";
 import { PhoneNav } from "@/widgets/phone-nav";
 
@@ -31,6 +31,47 @@ const KEYS = [
 	["0", "+"],
 	["#", ""],
 ] as const;
+
+const DTMF_FREQUENCIES: Record<(typeof KEYS)[number][0], readonly [number, number]> = {
+	"1": [697, 1209],
+	"2": [697, 1336],
+	"3": [697, 1477],
+	"4": [770, 1209],
+	"5": [770, 1336],
+	"6": [770, 1477],
+	"7": [852, 1209],
+	"8": [852, 1336],
+	"9": [852, 1477],
+	"*": [941, 1209],
+	"0": [941, 1336],
+	"#": [941, 1477],
+};
+
+let keypadAudioContext: AudioContext | undefined;
+
+async function playKeypadTone(key: (typeof KEYS)[number][0]) {
+	try {
+		keypadAudioContext ??= new AudioContext();
+		if (keypadAudioContext.state === "suspended") await keypadAudioContext.resume();
+
+		const startedAt = keypadAudioContext.currentTime;
+		const gain = keypadAudioContext.createGain();
+		gain.gain.setValueAtTime(0.0001, startedAt);
+		gain.gain.exponentialRampToValueAtTime(0.08, startedAt + 0.01);
+		gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.18);
+		gain.connect(keypadAudioContext.destination);
+
+		for (const frequency of DTMF_FREQUENCIES[key]) {
+			const oscillator = keypadAudioContext.createOscillator();
+			oscillator.frequency.value = frequency;
+			oscillator.connect(gain);
+			oscillator.start(startedAt);
+			oscillator.stop(startedAt + 0.18);
+		}
+	} catch {
+		// Audio feedback is optional and must never block keypad input.
+	}
+}
 
 function formatPhoneNumber(value: string) {
 	if (value.length <= 3) return value;
@@ -51,6 +92,7 @@ export function HomePage() {
 
 	const registration = useMutation({
 		mutationFn: () => registerPhone(normalizedMyPhone, deviceKey),
+		onError: () => snackbar.error("전화번호를 등록하지 못했어요."),
 	});
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restore the persisted identity only on mount
@@ -67,6 +109,10 @@ export function HomePage() {
 		staleTime: 0,
 		retry: 1,
 	});
+
+	useEffect(() => {
+		if (incoming.isError) snackbar.error("수신 전화를 확인하지 못했어요.");
+	}, [incoming.isError]);
 
 	useEffect(() => {
 		const call = incoming.data;
@@ -112,6 +158,7 @@ export function HomePage() {
 				},
 			});
 		},
+		onError: () => snackbar.error("전화를 걸지 못했어요. 잠시 후 다시 시도해 주세요."),
 	});
 
 	const startCall = () => {
@@ -124,8 +171,8 @@ export function HomePage() {
 	};
 
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
-			<header className="flex min-h-14 items-center justify-between py-3">
+		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
+			<header className="flex min-h-14 shrink-0 items-center justify-between pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
 				<h1 className="sr-only">전화 키패드</h1>
 				{isLocalOrPreview() ? (
 					<button
@@ -139,20 +186,15 @@ export function HomePage() {
 				) : (
 					<div />
 				)}
-				{(registration.isError || outgoing.isError || incoming.isError) && (
-					<p className="text-xs text-destructive" role="alert">
-						전화번호 등록 또는 연결을 확인해 주세요.
-					</p>
-				)}
 			</header>
 
-			<section className="flex flex-1 flex-col items-center justify-end pb-5">
+			<section className="flex min-h-0 flex-1 flex-col items-center justify-end overflow-y-auto pb-5">
 				<div
 					className="mt-4 flex min-h-24 w-full flex-col items-center justify-center"
 					aria-live="polite"
 				>
 					<p className="min-h-11 text-center text-4xl leading-11 font-light tracking-tight tabular-nums">
-						{phone || "전화번호 입력"}
+						{phone}
 					</p>
 				</div>
 
@@ -162,7 +204,10 @@ export function HomePage() {
 							key={number}
 							type="button"
 							className="mx-auto grid size-[68px] touch-manipulation appearance-none grid-rows-[38px_12px] content-center place-items-center rounded-full border-0 bg-secondary p-0 text-foreground shadow-none transition select-none active:scale-95 active:bg-bg-neutral-weak-pressed"
-							onClick={() => setDigits((current) => `${current}${number}`.slice(0, 11))}
+							onClick={() => {
+								void playKeypadTone(number);
+								setDigits((current) => `${current}${number}`.slice(0, 11));
+							}}
 							aria-label={number}
 						>
 							<span

@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { CallMode } from "@/entities/call";
 import { SignCaptureView } from "@/features/sign-capture";
 import { env } from "@/shared/config";
+import { snackbar } from "@/shared/lib";
 import { Button, Input } from "@/shared/ui";
 
 const ROOM_CODE_PATTERN = /^[A-Za-z0-9_-]{3,40}$/;
@@ -10,12 +11,11 @@ const ROOM_CODE_PATTERN = /^[A-Za-z0-9_-]{3,40}$/;
 export function LobbyPage() {
 	const navigate = useNavigate();
 	const [roomCode, setRoomCode] = useState("demo");
-	const [error, setError] = useState<string | null>(null);
 	const [showSignTest, setShowSignTest] = useState(false);
 
 	const enter = (mode: CallMode) => {
 		if (!ROOM_CODE_PATTERN.test(roomCode)) {
-			setError("방 코드는 영문, 숫자, _, - 3~40자만 사용할 수 있어요.");
+			snackbar.error("방 코드는 영문, 숫자, _, - 3~40자만 사용할 수 있어요.");
 			return;
 		}
 		navigate({
@@ -39,7 +39,6 @@ export function LobbyPage() {
 				placeholder="방 코드"
 				value={roomCode}
 			/>
-			{error && <p className="text-destructive text-sm">{error}</p>}
 			<div className="flex gap-4">
 				<Button onClick={() => enter("DEAF")} size="md">
 					청각장애인으로 입장 (방 생성)
