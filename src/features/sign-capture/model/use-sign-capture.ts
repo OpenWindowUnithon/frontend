@@ -1,7 +1,7 @@
 import type { HandLandmarkerResult } from "@mediapipe/tasks-vision";
 import { sample } from "es-toolkit";
 import type { Room } from "livekit-client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
 import { useHandLandmarker } from "@/shared/lib";
 
@@ -58,8 +58,16 @@ export function useSignCapture(room: Room | null) {
 
 		const text = mockInferSign();
 		setRecognizedText(text);
-		sendChatText(room, text);
 	});
 
-	return { videoRef, recognizedText, cameraError };
+	const sendRecognizedText = useCallback(
+		async (text: string) => {
+			if (!room || !text.trim()) return;
+			await sendChatText(room, text.trim());
+			setRecognizedText(null);
+		},
+		[room],
+	);
+
+	return { videoRef, recognizedText, setRecognizedText, sendRecognizedText, cameraError };
 }

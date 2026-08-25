@@ -15,7 +15,16 @@ export function LobbyPage() {
 			setError("방 코드는 영문, 숫자, _, - 3~40자만 사용할 수 있어요.");
 			return;
 		}
-		navigate({ to: "/call", search: { room: roomCode, mode } });
+		navigate({
+			to: "/call",
+			search: {
+				room: roomCode,
+				mode,
+				communication: "TEXT",
+				contactName: mode === "DEAF" ? "상대방" : "나루 이용자",
+				phone: roomCode,
+			},
+		});
 	};
 
 	return (
