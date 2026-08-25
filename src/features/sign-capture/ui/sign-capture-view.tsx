@@ -4,7 +4,6 @@ import {
 	Bot,
 	Camera,
 	CameraOff,
-	CheckCircle2,
 	ChevronDown,
 	Eye,
 	EyeOff,
@@ -86,57 +85,6 @@ function CameraStatusBar({
 						{detectedHandsCount > 0 ? `${detectedHandsCount}개 손` : "손 대기"}
 					</span>
 				</>
-			)}
-		</div>
-	);
-}
-
-function ActiveSignOverlay({
-	activeSign,
-	wordBuffer,
-	isComposing,
-}: {
-	activeSign: RecognizedSign | null;
-	wordBuffer: string[];
-	isComposing: boolean;
-}) {
-	// Caption-style accumulated words ("날씨 맛있다"), not chips -- the live single-word
-	// indicator (below) is a separate, smaller strip so it no longer blocks the caption once
-	// a second word starts accumulating.
-	const caption = wordBuffer.length > 0 ? wordBuffer.join(" ") : null;
-
-	return (
-		<div className="flex w-full flex-col items-center gap-1.5">
-			{activeSign && (
-				<div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-black/70 px-3 py-1 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
-					<span className="text-base">{activeSign.icon}</span>
-					<span className="font-semibold">{activeSign.label}</span>
-					<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-						{Math.round(activeSign.confidence * 100)}%
-					</span>
-					<span className="flex items-center gap-1 font-medium text-emerald-400">
-						<CheckCircle2 className="h-3 w-3" />
-						인식 중
-					</span>
-				</div>
-			)}
-
-			{caption ? (
-				<div className="flex w-full items-center gap-2 rounded-2xl border border-blue-500/40 bg-black/85 px-4 py-3 text-white shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95">
-					{isComposing ? (
-						<Activity className="h-4 w-4 shrink-0 animate-spin text-amber-400" />
-					) : (
-						<Sparkles className="h-4 w-4 shrink-0 text-blue-400" />
-					)}
-					<span className="font-bold text-lg leading-snug">{caption}</span>
-				</div>
-			) : (
-				!activeSign && (
-					<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
-						<Hand className="h-3.5 w-3.5 text-neutral-400" />
-						<span>수어 동작이나 제스처를 취하면 실시간으로 인식되고 문장으로 합성됩니다</span>
-					</div>
-				)
 			)}
 		</div>
 	);
@@ -380,9 +328,7 @@ export function SignCaptureView({
 		detectedHandsCount,
 		isArmDetected,
 		isComposing,
-		activeSign,
 		recentSigns,
-		wordBuffer,
 		composedSentence,
 		references,
 		toggleCamera,
@@ -473,17 +419,6 @@ export function SignCaptureView({
 				{/* Camera Inactive / Error Overlay */}
 				{(!isCameraActive || cameraError) && (
 					<CameraDisabledState cameraError={cameraError} onRetry={toggleCamera} />
-				)}
-
-				{/* Bottom Active Recognized Sign HUD */}
-				{isCameraActive && (
-					<div className="absolute right-3 bottom-3 left-3 flex flex-col items-center">
-						<ActiveSignOverlay
-							activeSign={activeSign}
-							wordBuffer={wordBuffer}
-							isComposing={isComposing}
-						/>
-					</div>
 				)}
 			</div>
 
