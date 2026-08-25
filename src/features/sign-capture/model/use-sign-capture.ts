@@ -1,8 +1,11 @@
 import type { HandLandmarkerResult, PoseLandmarkerResult } from "@mediapipe/tasks-vision";
+import { debounce } from "es-toolkit";
 import type { Room } from "livekit-client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
 import { useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
+import { composeSignSentence } from "../api/sign-api";
+import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
 	extractFeatures,
 	latestPoseLandmarks,
@@ -13,12 +16,16 @@ import { CONFIDENCE_THRESHOLD, predictSign } from "./sign-model";
 
 const CONSECUTIVE_REQUIRED = 3;
 const NO_SIGN_STREAK_TO_RESET = 5;
+// How long to wait after the last recognized word before treating the
+// buffered words as one finished utterance and asking the LLM to compose it.
+const UTTERANCE_IDLE_MS = 1800;
 
 /** Captures the local camera, runs Hand+Pose Landmarker on it, and sends recognized text as chat. */
 export function useSignCapture(room: Room | null) {
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
 	const [cameraError, setCameraError] = useState(false);
+	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
 
 	const windowRef = useRef(new RollingWindow());
 	const latestPoseRef = useRef<PoseLandmarkerResult | null>(null);
@@ -26,6 +33,35 @@ export function useSignCapture(room: Room | null) {
 	const candidateStreakRef = useRef(0);
 	const insertedForSegmentRef = useRef(false);
 	const predictingRef = useRef(false);
+	const roomRef = useRef(room);
+	roomRef.current = room;
+	const wordBufferRef = useRef<string[]>([]);
+
+	// Fires once the signer pauses for UTTERANCE_IDLE_MS: sends the buffered
+	// gloss words to the backend LLM and speaks/sends whatever sentence comes
+	// back (or the raw words, if the compose call itself fails).
+	const flushUtterance = useMemo(
+		() =>
+			debounce(() => {
+				const words = wordBufferRef.current;
+				wordBufferRef.current = [];
+				const currentRoom = roomRef.current;
+				if (words.length === 0 || !currentRoom) return;
+
+				composeSignSentence(words)
+					.then((sentence) => {
+						setRecognizedText(sentence);
+						sendChatText(currentRoom, sentence);
+					})
+					.catch(() => {
+						const fallback = words.join(" ");
+						setRecognizedText(fallback);
+						sendChatText(currentRoom, fallback);
+					});
+			}, UTTERANCE_IDLE_MS),
+		[],
+	);
+	useEffect(() => () => flushUtterance.cancel(), [flushUtterance]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -64,7 +100,10 @@ export function useSignCapture(room: Room | null) {
 		predictingRef.current = true;
 		predictSign(frames)
 			.then(({ label, confidence }) => {
-				const candidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+				const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+				// Words the trained model doesn't know (e.g. 병원/예약/도움) can still be
+				// recognized if the signer recorded reference samples for them below.
+				const candidate = lstmCandidate ?? matchReference(frames)?.word ?? null;
 
 				if (candidate === lastCandidateRef.current) {
 					candidateStreakRef.current += 1;
@@ -78,14 +117,14 @@ export function useSignCapture(room: Room | null) {
 				}
 
 				if (
-					room &&
 					candidate &&
 					candidateStreakRef.current >= CONSECUTIVE_REQUIRED &&
 					!insertedForSegmentRef.current
 				) {
 					insertedForSegmentRef.current = true;
-					setRecognizedText(candidate);
-					sendChatText(room, candidate);
+					wordBufferRef.current = [...wordBufferRef.current, candidate];
+					setRecognizedText(wordBufferRef.current.join(" "));
+					flushUtterance();
 				}
 			})
 			.finally(() => {
@@ -93,5 +132,20 @@ export function useSignCapture(room: Room | null) {
 			});
 	});
 
-	return { videoRef, recognizedText, cameraError };
+	// Records the last 30 captured frames as one reference sample for `word`.
+	// Returns false if the window hasn't filled yet (call again a moment later).
+	function recordReference(word: string): boolean {
+		const frames = windowRef.current.toArray();
+		if (!frames || !word.trim()) return false;
+		saveReference(word.trim(), frames);
+		setReferences(listReferences());
+		return true;
+	}
+
+	function removeReference(word: string) {
+		clearReference(word);
+		setReferences(listReferences());
+	}
+
+	return { videoRef, recognizedText, cameraError, references, recordReference, removeReference };
 }
