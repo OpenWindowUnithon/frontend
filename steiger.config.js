@@ -14,4 +14,10 @@ export default defineConfig([
 			"fsd/segments-by-purpose": "off",
 		},
 	},
+	{
+		files: ["./src/shared/ui/seed-design/**"],
+		rules: {
+			"fsd/no-reserved-folder-names": "off",
+		},
+	},
 ]);

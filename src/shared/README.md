@@ -48,7 +48,7 @@ hand-rolled per-project. Reach for these before adding a new file to
 | useLocalStorage, useDebounce, useMediaQuery, useClickOutside | `usehooks-ts` |
 | dates/relative time                     | `dayjs` (`shared/lib/dayjs.ts`)  |
 | form state + validation                 | `react-hook-form` + `zod` (`@hookform/resolvers/zod`) |
-| toast notifications                     | `sonner`'s `toast(...)` directly — `<Toaster />` is already mounted in `app/providers` |
+| toast notifications                     | SEED Snackbar via `snackbar.success(...)`, `.error(...)`, `.warning(...)`, or `.info(...)` from `shared/lib` |
 | conditional/merged Tailwind classes     | `cn()` (`shared/lib/cn.ts`)      |
 | tailwind style variants (e.g. a button's `variant`/`size` props) | `class-variance-authority` |
 

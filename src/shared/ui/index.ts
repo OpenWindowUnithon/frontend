@@ -48,6 +48,13 @@ export {
 } from "./dropdown-menu";
 export { Input } from "./input";
 export {
+	Snackbar,
+	SnackbarAvoidOverlap,
+	type SnackbarProps,
+	SnackbarProvider,
+	useSnackbarAdapter,
+} from "./seed-design/ui/snackbar";
+export {
 	Select,
 	SelectContent,
 	SelectGroup,

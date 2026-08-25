@@ -6,7 +6,7 @@
 | server state (fetch/cache/mutate)         | `@tanstack/react-query` — never `useEffect` + `useState` for a fetch |
 | client/UI state                           | `zustand`                                                |
 | HTTP                                      | `axios` via `shared/api`'s `apiClient` — never a new `axios.create()` per feature |
-| toasts                                    | `sonner`'s `toast(...)` — `<Toaster />` is already mounted in `app/providers` |
+| toast notifications                       | SEED Snackbar via `snackbar.success(...)`, `.error(...)`, `.warning(...)`, or `.info(...)` from `shared/lib` — its provider and global bridge are mounted in `app/providers` |
 | dates                                     | `dayjs` (`shared/lib/dayjs.ts`, `relativeTime` + `ko` locale already configured) |
 | conditional/merged Tailwind classes       | `cn()` (`shared/lib/cn.ts` — clsx + tailwind-merge)      |
 | Tailwind style variants (button size/variant, etc.) | `class-variance-authority`                    |
