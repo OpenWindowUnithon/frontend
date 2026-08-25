@@ -1,6 +1,8 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { CallMode } from "@/entities/call";
+import { SignCaptureView } from "@/features/sign-capture";
+import { env } from "@/shared/config";
 import { Button, Input } from "@/shared/ui";
 
 const ROOM_CODE_PATTERN = /^[A-Za-z0-9_-]{3,40}$/;
@@ -9,6 +11,7 @@ export function LobbyPage() {
 	const navigate = useNavigate();
 	const [roomCode, setRoomCode] = useState("demo");
 	const [error, setError] = useState<string | null>(null);
+	const [showSignTest, setShowSignTest] = useState(false);
 
 	const enter = (mode: CallMode) => {
 		if (!ROOM_CODE_PATTERN.test(roomCode)) {
@@ -45,6 +48,15 @@ export function LobbyPage() {
 					비장애인으로 입장
 				</Button>
 			</div>
+
+			{env.VITE_APP_ENV === "preview" && (
+				<div className="mt-4 flex w-full max-w-2xl flex-col items-center gap-3 border-t pt-6">
+					<Button onClick={() => setShowSignTest((prev) => !prev)} size="sm" variant="outline">
+						{showSignTest ? "수어 인식 테스트 닫기" : "수어 인식 카메라 테스트 (프리뷰 전용)"}
+					</Button>
+					{showSignTest && <SignCaptureView />}
+				</div>
+			)}
 		</main>
 	);
 }
