@@ -4,16 +4,24 @@ import { useEffect, useState } from "react";
 import { JoinCall, useJoinCall } from "@/features/join-call";
 import { CallRoom } from "@/widgets/call-room";
 
+const UUID_ROOM_CODE =
+	/^call-([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/i;
+
+function normalizeRoomCode(roomCode: string) {
+	return roomCode.replace(UUID_ROOM_CODE, "call-$1$2$3$4$5");
+}
+
 export function CallPage() {
 	const { mode, room: roomCode, communication, contactName, phone } = useSearch({ from: "/call" });
+	const normalizedRoomCode = normalizeRoomCode(roomCode);
 	const navigate = useNavigate();
 	const { room, status, join, leave } = useJoinCall();
 	const [seconds, setSeconds] = useState(0);
 	const [cancelling, setCancelling] = useState(false);
 
 	useEffect(() => {
-		join(roomCode, mode, mode === "DEAF");
-	}, [roomCode, mode, join]);
+		join(normalizedRoomCode, mode, mode === "DEAF");
+	}, [normalizedRoomCode, mode, join]);
 
 	useEffect(() => {
 		if (status !== "connected") return;

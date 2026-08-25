@@ -32,7 +32,7 @@ function formatPhoneNumber(value: string) {
 }
 
 function createRoomCode() {
-	return `call-${crypto.randomUUID()}`;
+	return `call-${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
 export function HomePage() {
