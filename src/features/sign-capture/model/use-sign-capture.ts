@@ -10,11 +10,12 @@ import type { CaptionType } from "@/entities/caption";
 import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
 import { type ConversationTurn, composeSignSentence } from "../api/sign-api";
 import {
-	clearReference,
 	closestReference,
 	DEFAULT_DTW_THRESHOLD,
+	deleteReference,
 	listReferences,
-	saveReference,
+	loadReferencesFromServer,
+	replaceReferenceSamples,
 } from "./dtw";
 import {
 	extractFeatures,
@@ -52,6 +53,7 @@ export interface UseSignCaptureReturn {
 	recognitionDebug: RecognitionDebug | null;
 	handsGoneSince: number | null;
 	isRecordingWord: boolean;
+	isSavingReference: boolean;
 	recordingSecond: number;
 	recordingTotalSeconds: number;
 	recordingTotalReps: number;
@@ -292,6 +294,7 @@ export function useSignCapture(
 	const [recognitionDebug, setRecognitionDebug] = useState<RecognitionDebug | null>(null);
 	const [handsGoneSince, setHandsGoneSince] = useState<number | null>(null);
 	const [isRecordingWord, setIsRecordingWord] = useState(false);
+	const [isSavingReference, setIsSavingReference] = useState(false);
 	const [recordingSecond, setRecordingSecond] = useState(0);
 	const [recordingResult, setRecordingResult] = useState<{ ok: boolean; message: string } | null>(
 		null,
@@ -378,6 +381,23 @@ export function useSignCapture(
 			if (recordingEndTimerRef.current) clearTimeout(recordingEndTimerRef.current);
 		};
 	}, [startCamera, stopCamera]);
+
+	// Load the global reference store once on mount -- recognition itself reads the
+	// in-memory cache dtw.ts keeps (synchronous, per video frame), so this is a one-time
+	// sync point, not something re-fetched per frame.
+	useEffect(() => {
+		let cancelled = false;
+		loadReferencesFromServer()
+			.then((counts) => {
+				if (!cancelled) setReferences(counts);
+			})
+			.catch((err) => {
+				console.error("Failed to load sign word references:", err);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	// Records each newly-finalized caption (the HEARING side's speech) into the shared
 	// history so the next compose call has it as context. Interim captions are skipped —
@@ -593,23 +613,35 @@ export function useSignCapture(
 			const idx = Math.min(RECORD_REPS - 1, Math.floor(t / (REP_INTERVAL_SECONDS * 1000)));
 			buckets[idx]?.push(f);
 		}
+		const validSamples = buckets.filter((bucket) => bucket.length >= MIN_SEGMENT_FRAMES);
 
-		clearReference(word);
-		let saved = 0;
-		for (const bucket of buckets) {
-			if (bucket.length < MIN_SEGMENT_FRAMES) continue;
-			saveReference(word, bucket);
-			saved += 1;
+		if (validSamples.length === 0) {
+			setRecordingResult({
+				ok: false,
+				message: "동작이 감지되지 않았습니다. 손이 잘 보이는 곳에서 다시 시도해주세요.",
+			});
+			return;
 		}
-		setReferences(listReferences());
-		setRecordingResult(
-			saved > 0
-				? { ok: true, message: `'${word}' 동작 샘플 ${saved}개를 저장했습니다.` }
-				: {
-						ok: false,
-						message: "동작이 감지되지 않았습니다. 손이 잘 보이는 곳에서 다시 시도해주세요.",
-					},
-		);
+
+		setIsSavingReference(true);
+		replaceReferenceSamples(word, validSamples)
+			.then(() => {
+				setReferences(listReferences());
+				setRecordingResult({
+					ok: true,
+					message: `'${word}' 동작 샘플 ${validSamples.length}개를 저장했습니다.`,
+				});
+			})
+			.catch((err) => {
+				console.error("Failed to save sign word reference:", err);
+				setRecordingResult({
+					ok: false,
+					message: "저장에 실패했습니다. 네트워크 연결을 확인하고 다시 시도해주세요.",
+				});
+			})
+			.finally(() => {
+				setIsSavingReference(false);
+			});
 	}, []);
 
 	const startRecordingReference = useCallback(
@@ -653,8 +685,11 @@ export function useSignCapture(
 	}, []);
 
 	const removeReference = useCallback((word: string) => {
-		clearReference(word);
-		setReferences(listReferences());
+		deleteReference(word)
+			.then(() => setReferences(listReferences()))
+			.catch((err) => {
+				console.error("Failed to delete sign word reference:", err);
+			});
 	}, []);
 
 	return {
@@ -678,6 +713,7 @@ export function useSignCapture(
 		recognitionDebug,
 		handsGoneSince,
 		isRecordingWord,
+		isSavingReference,
 		recordingSecond,
 		recordingTotalSeconds: RECORD_TOTAL_SECONDS,
 		recordingTotalReps: RECORD_REPS,

@@ -288,6 +288,7 @@ function RecentSignsHistory({
 function CustomWordRecorder({
 	references,
 	isRecording,
+	isSaving,
 	recordingSecond,
 	recordingTotalSeconds,
 	recordingTotalReps,
@@ -300,6 +301,7 @@ function CustomWordRecorder({
 }: {
 	references: Record<string, number>;
 	isRecording: boolean;
+	isSaving: boolean;
 	recordingSecond: number;
 	recordingTotalSeconds: number;
 	recordingTotalReps: number;
@@ -334,14 +336,15 @@ function CustomWordRecorder({
 				<p className="text-neutral-400 text-xs leading-relaxed">
 					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 등록해보세요. "학습 시작"을 누르면{" "}
 					{recordingTotalSeconds}초 동안 {recordingRepIntervalSeconds}초에 한 번씩 그 단어의 동작을
-					반복해주시면(총 {recordingTotalReps}번) 자동으로 나눠서 저장합니다.
+					반복해주시면(총 {recordingTotalReps}번) 자동으로 나눠서 저장합니다. 등록한 단어는 모든
+					사용자에게 공유됩니다.
 				</p>
 				<div className="flex items-center gap-2">
 					<Input
 						placeholder="단어 이름 (예: 병원)"
 						value={newWord}
 						onChange={(e) => setNewWord(e.target.value)}
-						disabled={isRecording}
+						disabled={isRecording || isSaving}
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
 					{isRecording ? (
@@ -365,12 +368,12 @@ function CustomWordRecorder({
 					) : (
 						<Button
 							size="sm"
-							disabled={!newWord.trim()}
+							disabled={!newWord.trim() || isSaving}
 							onClick={handleStart}
 							className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
 						>
 							<Plus className="h-3.5 w-3.5" />
-							학습 시작
+							{isSaving ? "저장 중..." : "학습 시작"}
 						</Button>
 					)}
 				</div>
@@ -428,7 +431,7 @@ function CustomWordRecorder({
 								<button
 									type="button"
 									onClick={() => onRemove(word)}
-									disabled={isRecording}
+									disabled={isRecording || isSaving}
 									className="flex items-center gap-1 text-red-400 hover:text-red-300 disabled:opacity-40"
 								>
 									<Trash2 className="h-3 w-3" />
@@ -506,6 +509,7 @@ export function SignCaptureView({
 		recognitionDebug,
 		handsGoneSince,
 		isRecordingWord,
+		isSavingReference,
 		recordingSecond,
 		recordingTotalSeconds,
 		recordingTotalReps,
@@ -631,6 +635,7 @@ export function SignCaptureView({
 			<CustomWordRecorder
 				references={references}
 				isRecording={isRecordingWord}
+				isSaving={isSavingReference}
 				recordingSecond={recordingSecond}
 				recordingTotalSeconds={recordingTotalSeconds}
 				recordingTotalReps={recordingTotalReps}

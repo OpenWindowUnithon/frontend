@@ -2,7 +2,6 @@ import { IconBackspacekeyFill, IconPhoneFill } from "@karrotmarket/react-monochr
 import { Icon } from "@seed-design/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Camera } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
 	createOutgoingCall,
@@ -13,7 +12,6 @@ import {
 	registerPhone,
 } from "@/entities/call";
 import { setSessionKey } from "@/features/join-call";
-import { isLocalOrPreview } from "@/shared/lib";
 import { ActionButton } from "@/shared/ui";
 import { PhoneNav } from "@/widgets/phone-nav";
 
@@ -127,18 +125,7 @@ export function HomePage() {
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
 			<header className="flex min-h-14 items-center justify-between py-3">
 				<h1 className="sr-only">전화 키패드</h1>
-				{isLocalOrPreview() ? (
-					<button
-						type="button"
-						onClick={() => navigate({ to: "/test-camera" })}
-						className="flex items-center gap-1.5 rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 font-semibold text-blue-400 text-xs transition-all hover:bg-blue-500/20 active:scale-95"
-					>
-						<Camera className="size-3.5" />
-						<span>카메라 테스트</span>
-					</button>
-				) : (
-					<div />
-				)}
+				<div />
 				{(registration.isError || outgoing.isError || incoming.isError) && (
 					<p className="text-xs text-destructive" role="alert">
 						전화번호 등록 또는 연결을 확인해 주세요.
