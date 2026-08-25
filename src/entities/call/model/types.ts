@@ -63,3 +63,14 @@ export const incomingCallSchema = z.object({
 	createdAt: z.string(),
 });
 export type IncomingCall = z.infer<typeof incomingCallSchema>;
+
+export const recentCallSchema = z.object({
+	callId: z.string(),
+	direction: z.enum(["INCOMING", "OUTGOING"]),
+	peerPhone: z.string(),
+	status: callStatusSchema,
+	startedAt: z.string().nullable(),
+	endedAt: z.string().nullable(),
+	durationSeconds: z.number().nullable(),
+});
+export type RecentCall = z.infer<typeof recentCallSchema>;

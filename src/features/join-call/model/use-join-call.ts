@@ -8,12 +8,12 @@ import {
 	type CallRole,
 	createCall,
 	disconnectCall,
-	endCall,
 	getCallStatus,
 	joinCall,
 	rejectCall,
 	type StatusResult,
 	sendHeartbeat,
+	terminateCall,
 } from "@/entities/call";
 import { connectRoom } from "@/shared/lib";
 import { getOrCreateSessionKey } from "./session-keys";
@@ -103,7 +103,7 @@ export function useJoinCall() {
 			if (!state.callId || !params) throw new Error("통화 상태 조회 정보가 없습니다.");
 			return getCallStatus(state.callId, params.participantKey);
 		},
-		enabled: state.status === "ringing" && Boolean(state.callId),
+		enabled: (state.status === "ringing" || state.status === "connected") && Boolean(state.callId),
 		refetchInterval: STATUS_POLL_INTERVAL_MS,
 		refetchIntervalInBackground: true,
 		retry: 2,
@@ -289,10 +289,8 @@ export function useJoinCall() {
 			if (params && callId) {
 				if (status === "ringing" || status === "connecting") {
 					await rejectCall(callId, params.participantKey);
-				} else if (params.isCreator) {
-					await endCall(callId, getOrCreateSessionKey("creator", params.roomCode));
 				} else {
-					await disconnectCall(callId, params.participantKey);
+					await terminateCall(callId, params.participantKey);
 				}
 			}
 			generationRef.current += 1;
@@ -316,7 +314,19 @@ export function useJoinCall() {
 			return;
 		}
 		const result = statusQuery.data;
-		if (!result || stateRef.current.status !== "ringing") return;
+		if (!result) return;
+		if (
+			stateRef.current.status === "connected" &&
+			(result.status === "REJECTED" || result.status === "ENDED")
+		) {
+			generationRef.current += 1;
+			manualLeaveRef.current = true;
+			stopHeartbeat();
+			stateRef.current.room?.disconnect();
+			updateState((current) => ({ ...current, status: "ended" }));
+			return;
+		}
+		if (stateRef.current.status !== "ringing") return;
 		if (result.status === "REJECTED" || result.status === "ENDED") {
 			markRejected();
 			return;
@@ -344,10 +354,7 @@ export function useJoinCall() {
 			if (params && callId && (status === "ringing" || status === "connecting")) {
 				rejectCall(callId, params.participantKey).catch(() => {});
 			} else if (params && callId && (status === "connected" || status === "reconnecting")) {
-				const notifyServer = params.isCreator
-					? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
-					: disconnectCall(callId, params.participantKey);
-				notifyServer.catch(() => {});
+				disconnectCall(callId, params.participantKey).catch(() => {});
 			}
 			room?.disconnect();
 		};

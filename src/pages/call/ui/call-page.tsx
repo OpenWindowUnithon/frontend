@@ -75,6 +75,7 @@ export function CallPage() {
 			phone={phone}
 			seconds={seconds}
 			onEnd={leave}
+			endedExternally={status === "ended"}
 		/>
 	);
 }

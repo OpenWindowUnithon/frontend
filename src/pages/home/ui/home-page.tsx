@@ -1,21 +1,18 @@
-import {
-	IconBackspacekeyFill,
-	IconClockFill,
-	IconPersonFill,
-	IconPhoneFill,
-} from "@karrotmarket/react-monochrome-icon";
+import { IconBackspacekeyFill, IconPhoneFill } from "@karrotmarket/react-monochrome-icon";
 import { Icon } from "@seed-design/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-	type CommunicationMode,
 	createOutgoingCall,
+	getDeviceKey,
 	getIncomingCall,
+	getMyPhone,
 	registerPhone,
 } from "@/entities/call";
 import { setSessionKey } from "@/features/join-call";
-import { ActionButton, Input, SegmentedControl, SegmentedControlItem } from "@/shared/ui";
+import { ActionButton } from "@/shared/ui";
+import { PhoneNav } from "@/widgets/phone-nav";
 
 const KEYS = [
 	["1", ""],
@@ -38,32 +35,19 @@ function formatPhoneNumber(value: string) {
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
-function getDeviceKey() {
-	const key = "phone-device-key";
-	const existing = localStorage.getItem(key);
-	if (existing) return existing;
-	const created = crypto.randomUUID();
-	localStorage.setItem(key, created);
-	return created;
-}
-
 export function HomePage() {
 	const navigate = useNavigate();
 	const [deviceKey] = useState(getDeviceKey);
-	const [myPhone, setMyPhone] = useState(() => localStorage.getItem("my-phone") ?? "");
+	const [myPhone] = useState(getMyPhone);
 	const [digits, setDigits] = useState("");
-	const [communication, setCommunication] = useState<CommunicationMode>("TEXT");
+	const communication = "TEXT" as const;
 	const phone = formatPhoneNumber(digits);
 	const normalizedMyPhone = myPhone.replace(/\D/g, "").slice(0, 11);
 	const normalizedCalleePhone = /^01\d{8,9}$/.test(digits) ? digits : null;
-	const canCall = normalizedCalleePhone !== null && /^01\d{8,9}$/.test(normalizedMyPhone);
+	const canCall = normalizedCalleePhone !== null;
 
 	const registration = useMutation({
 		mutationFn: () => registerPhone(normalizedMyPhone, deviceKey),
-		onSuccess: (registeredPhone) => {
-			localStorage.setItem("my-phone", registeredPhone);
-			setMyPhone(registeredPhone);
-		},
 	});
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restore the persisted identity only on mount
@@ -128,29 +112,18 @@ export function HomePage() {
 	});
 
 	const startCall = () => {
+		if (!/^01\d{8,9}$/.test(normalizedMyPhone)) {
+			navigate({ to: "/my" });
+			return;
+		}
 		if (!canCall) return;
 		outgoing.mutate();
 	};
 
 	return (
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
-			<header className="flex min-h-11 flex-col items-center justify-center gap-2 py-3">
+			<header className="flex min-h-14 items-center justify-center py-3">
 				<h1 className="sr-only">전화 키패드</h1>
-				<div className="flex w-full items-center gap-2">
-					<Input
-						aria-label="내 전화번호"
-						placeholder="내 전화번호"
-						value={formatPhoneNumber(normalizedMyPhone)}
-						onChange={(event) => setMyPhone(event.target.value.replace(/\D/g, "").slice(0, 11))}
-					/>
-					<ActionButton
-						size="small"
-						disabled={normalizedMyPhone.length < 10 || registration.isPending}
-						onClick={() => registration.mutate()}
-					>
-						등록
-					</ActionButton>
-				</div>
 				{(registration.isError || outgoing.isError || incoming.isError) && (
 					<p className="text-xs text-destructive" role="alert">
 						전화번호 등록 또는 연결을 확인해 주세요.
@@ -159,20 +132,6 @@ export function HomePage() {
 			</header>
 
 			<section className="flex flex-1 flex-col items-center justify-end pb-5">
-				<SegmentedControl
-					style={{ width: 224 }}
-					aria-label="통화 방식"
-					value={communication}
-					onValueChange={(value) => setCommunication(value as CommunicationMode)}
-				>
-					<SegmentedControlItem value="TEXT">
-						<span className="whitespace-nowrap">텍스트</span>
-					</SegmentedControlItem>
-					<SegmentedControlItem value="SIGN">
-						<span className="whitespace-nowrap">수어</span>
-					</SegmentedControlItem>
-				</SegmentedControl>
-
 				<div
 					className="mt-4 flex min-h-24 w-full flex-col items-center justify-center"
 					aria-live="polite"
@@ -232,28 +191,7 @@ export function HomePage() {
 				</div>
 			</section>
 
-			<nav className="grid grid-cols-3 border-t pt-2" aria-label="전화 메뉴">
-				<button
-					type="button"
-					className="flex flex-col items-center gap-1 py-2 text-muted-foreground"
-				>
-					<IconClockFill className="size-6" aria-hidden />
-					<span className="text-xs">최근 통화</span>
-				</button>
-				<button
-					type="button"
-					className="flex flex-col items-center gap-1 py-2 text-muted-foreground"
-				>
-					<IconPersonFill className="size-6" aria-hidden />
-					<span className="text-xs">연락처</span>
-				</button>
-				<button type="button" className="flex flex-col items-center gap-1 py-2 text-fg-informative">
-					<span className="grid size-6 grid-cols-3 place-items-center text-[0.6rem] font-bold">
-						•••
-					</span>
-					<span className="text-xs font-medium">키패드</span>
-				</button>
-			</nav>
+			<PhoneNav current="keypad" />
 		</main>
 	);
 }

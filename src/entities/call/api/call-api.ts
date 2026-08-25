@@ -4,6 +4,7 @@ import type {
 	IncomingCall,
 	JoinResult,
 	OutgoingCall,
+	RecentCall,
 	StatusResult,
 } from "../model/types";
 import {
@@ -11,6 +12,7 @@ import {
 	joinResultSchema,
 	outgoingCallSchema,
 	phoneRegistrationSchema,
+	recentCallSchema,
 	statusResultSchema,
 } from "../model/types";
 
@@ -43,6 +45,19 @@ export async function getIncomingCall(participantKey: string): Promise<IncomingC
 		headers: { "X-Participant-Key": participantKey },
 	});
 	return response.status === 204 || !response.data ? null : incomingCallSchema.parse(response.data);
+}
+
+export async function getRecentCalls(participantKey: string): Promise<RecentCall[]> {
+	const { data } = await apiClient.get("/api/calls/recent", {
+		headers: { "X-Participant-Key": participantKey },
+	});
+	return recentCallSchema.array().parse(data);
+}
+
+export async function terminateCall(callId: string, participantKey: string): Promise<void> {
+	await apiClient.post(`/api/calls/${callId}/terminate`, undefined, {
+		headers: { "X-Participant-Key": participantKey },
+	});
 }
 
 /** Idempotent per creator key — same key + roomCode returns the existing call instead of erroring. */

@@ -1,7 +1,5 @@
 import {
 	IconGridDot5Fill,
-	IconHandWaveFill,
-	IconHorizline2VerticalChatbubbleRectangularRightFill,
 	IconPaperplaneFill,
 	IconPhoneXmarkFill,
 	IconSpeakerWave2Fill,
@@ -10,8 +8,16 @@ import {
 import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import type { Room } from "livekit-client";
-import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
+import {
+	type Dispatch,
+	type ReactNode,
+	type SetStateAction,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { type CallMode, type CommunicationMode, sendChatText } from "@/entities/call";
+import { Caption } from "@/entities/caption";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
 import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
@@ -26,6 +32,7 @@ interface CallRoomProps {
 	phone: string;
 	seconds: number;
 	onEnd: () => Promise<void>;
+	endedExternally: boolean;
 }
 
 type TextMessage = {
@@ -95,6 +102,29 @@ function TextCall({
 	setMessages: Dispatch<SetStateAction<TextMessage[]>>;
 }) {
 	const inputRef = useRef<HTMLTextAreaElement>(null);
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const bottomRef = useRef<HTMLDivElement>(null);
+	const captionTimes = useRef(new Map<string, number>());
+	for (const caption of captions) {
+		if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
+	}
+	const timeline = [
+		...captions.map((caption) => ({
+			kind: "caption" as const,
+			at: captionTimes.current.get(caption.id) ?? 0,
+			caption,
+		})),
+		...messages.map((message) => ({ kind: "message" as const, at: message.id, message })),
+	].sort((left, right) => left.at - right.at);
+	const timelineVersion = `${timeline.length}:${captions.at(-1)?.text ?? ""}`;
+
+	useEffect(() => {
+		if (!timelineVersion) return;
+		const container = scrollRef.current;
+		if (!container) return;
+		const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+		if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+	}, [timelineVersion]);
 
 	const deliver = async (text: string, existingId?: number) => {
 		const clean = text.trim();
@@ -121,79 +151,85 @@ function TextCall({
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
 			<div
+				ref={scrollRef}
 				className="min-h-40 flex-1 space-y-3 overflow-y-auto px-5 pb-4 pt-6"
 				aria-label="통화 대화"
 				aria-live="polite"
 				role="log"
 			>
-				<CaptionList captions={captions} />
-				{messages.map((message) => (
-					<div className="flex justify-end" key={message.id}>
-						<div
-							className={`w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground ${message.state === "failed" ? "outline-2 outline-dashed outline-destructive" : ""}`}
-						>
-							<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
-								{message.text}
-							</p>
-							{message.state === "failed" && (
-								<div className="mt-3 border-t border-background/30 pt-3">
-									<p className="mb-2 text-sm text-background/80">전달하지 못했어요</p>
-									<ActionButton
-										variant="neutralOutline"
-										size="large"
-										className="h-11 w-full border-background/60 text-background hover:text-foreground"
-										onClick={() => deliver(message.text, message.id)}
-									>
-										다시 전달
-									</ActionButton>
-								</div>
-							)}
+				{timeline.length === 0 && (
+					<p className="text-muted-foreground">상대방이 말하면 이곳에 실시간으로 표시돼요.</p>
+				)}
+				{timeline.map((item) =>
+					item.kind === "caption" ? (
+						<Caption caption={item.caption} key={`caption-${item.caption.id}`} />
+					) : (
+						<div className="flex justify-end" key={`message-${item.message.id}`}>
+							<div
+								className={`w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground ${item.message.state === "failed" ? "outline-2 outline-dashed outline-destructive" : ""}`}
+							>
+								<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
+									{item.message.text}
+								</p>
+								{item.message.state === "failed" && (
+									<div className="mt-3 border-t border-background/30 pt-3">
+										<p className="mb-2 text-sm text-background/80">전달하지 못했어요</p>
+										<ActionButton
+											variant="neutralOutline"
+											size="large"
+											className="h-11 w-full border-background/60 text-background hover:text-foreground"
+											onClick={() => deliver(item.message.text, item.message.id)}
+										>
+											다시 전달
+										</ActionButton>
+									</div>
+								)}
+							</div>
 						</div>
-					</div>
-				))}
+					),
+				)}
+				<div ref={bottomRef} />
 			</div>
-			<div className="px-5 pb-4">{renderControls(() => inputRef.current?.focus())}</div>
-			<form
-				className="bg-card px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
-				onSubmit={(event) => {
-					event.preventDefault();
-					void deliver(draft);
-				}}
-			>
-				<div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
-					<TextField value={draft} onValueChange={({ value }) => setDraft(value)} size="large">
-						<TextFieldTextarea
-							ref={inputRef}
-							aria-label="상대방에게 전달할 내용"
-							placeholder="메시지 입력"
-							style={{ minHeight: 56, maxHeight: 120 }}
-						/>
-					</TextField>
-					<ActionButton
-						variant="neutralSolid"
-						size="large"
-						className="h-14 shrink-0 rounded-full px-4"
-						disabled={!draft.trim()}
-						type="submit"
-						aria-label="AI 음성으로 전달"
-					>
-						<PrefixIcon svg={<IconPaperplaneFill />} /> 전달
-					</ActionButton>
-				</div>
-			</form>
+			<div className="sticky bottom-0 bg-card pt-2">
+				<div className="px-5 pb-3">{renderControls(() => inputRef.current?.focus())}</div>
+				<form
+					className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+					onSubmit={(event) => {
+						event.preventDefault();
+						void deliver(draft);
+					}}
+				>
+					<div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+						<TextField value={draft} onValueChange={({ value }) => setDraft(value)} size="large">
+							<TextFieldTextarea
+								ref={inputRef}
+								aria-label="상대방에게 전달할 내용"
+								placeholder="메시지 입력"
+								style={{ minHeight: 56, maxHeight: 120 }}
+							/>
+						</TextField>
+						<ActionButton
+							variant="neutralSolid"
+							size="large"
+							className="h-14 shrink-0 rounded-full px-4"
+							disabled={!draft.trim()}
+							type="submit"
+							aria-label="AI 음성으로 전달"
+						>
+							<PrefixIcon svg={<IconPaperplaneFill />} /> 전달
+						</ActionButton>
+					</div>
+				</form>
+			</div>
 		</div>
 	);
 }
 
 function TextCallControls({
-	communication,
-	onSwitch,
 	onEnd,
 	ending,
 	onFocusInput,
 }: {
-	communication: CommunicationMode;
-	onSwitch: () => void;
 	onEnd: () => void;
 	ending: boolean;
 	onFocusInput: () => void;
@@ -206,19 +242,10 @@ function TextCallControls({
 	};
 	const controls = [
 		{
-			label: speakerOff ? "소리 켜기" : "소리 끄기",
+			label: speakerOff ? "스피커 켜기" : "스피커 끄기",
 			icon: speakerOff ? IconSpeakerWave2SlashFill : IconSpeakerWave2Fill,
 			onClick: toggleSpeaker,
 			active: speakerOff,
-		},
-		{
-			label: communication === "SIGN" ? "텍스트" : "수어",
-			icon:
-				communication === "SIGN"
-					? IconHorizline2VerticalChatbubbleRectangularRightFill
-					: IconHandWaveFill,
-			onClick: onSwitch,
-			active: false,
 		},
 		{
 			label: ending ? "종료 중" : "종료",
@@ -237,7 +264,7 @@ function TextCallControls({
 	];
 
 	return (
-		<fieldset className="grid grid-cols-4 gap-2" aria-label="통화 제어">
+		<fieldset className="grid grid-cols-3 gap-2" aria-label="통화 제어">
 			<legend className="sr-only">통화 제어</legend>
 			{controls.map((control) => {
 				const Icon = control.icon;
@@ -259,34 +286,6 @@ function TextCallControls({
 					</button>
 				);
 			})}
-		</fieldset>
-	);
-}
-
-function CallControls({
-	communication,
-	onSwitch,
-}: {
-	communication: CommunicationMode;
-	onSwitch: () => void;
-}) {
-	return (
-		<fieldset className="flex px-5 pb-4">
-			<legend className="sr-only">통화 제어</legend>
-			<button
-				type="button"
-				onClick={onSwitch}
-				className="flex min-h-18 min-w-20 flex-col items-center justify-center gap-1.5 rounded-2xl text-sm font-semibold focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring"
-			>
-				<span className="grid size-12 place-items-center rounded-full bg-card">
-					{communication === "SIGN" ? (
-						<IconHorizline2VerticalChatbubbleRectangularRightFill className="size-6" aria-hidden />
-					) : (
-						<IconHandWaveFill className="size-6" aria-hidden />
-					)}
-				</span>
-				{communication === "SIGN" ? "텍스트로 전환" : "수어로 전환"}
-			</button>
 		</fieldset>
 	);
 }
@@ -328,11 +327,10 @@ export function CallRoom(props: CallRoomProps) {
 	const [ended, setEnded] = useState(false);
 	const [ending, setEnding] = useState(false);
 	const [endError, setEndError] = useState(false);
-	const [communication, setCommunication] = useState(props.communication);
+	const communication = props.communication;
 	const [textDraft, setTextDraft] = useState("");
 	const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
 	const captions = useReceiveCaptions(props.room);
-
 	const endCall = async () => {
 		setEnding(true);
 		setEndError(false);
@@ -345,9 +343,7 @@ export function CallRoom(props: CallRoomProps) {
 			setEnding(false);
 		}
 	};
-
-	if (ended) return <EndedCall {...props} communication={communication} />;
-
+	if (ended || props.endedExternally) return <EndedCall {...props} communication={communication} />;
 	if (props.mode === "HEARING") {
 		return (
 			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
@@ -383,10 +379,6 @@ export function CallRoom(props: CallRoomProps) {
 						onEnd={() => void endCall()}
 						ending={ending}
 					/>
-					<CallControls
-						communication={communication}
-						onSwitch={() => setCommunication((value) => (value === "SIGN" ? "TEXT" : "SIGN"))}
-					/>
 				</section>
 			)}
 			{endError && (
@@ -404,8 +396,6 @@ export function CallRoom(props: CallRoomProps) {
 					setMessages={setTextMessages}
 					renderControls={(focusInput) => (
 						<TextCallControls
-							communication={communication}
-							onSwitch={() => setCommunication((value) => (value === "SIGN" ? "TEXT" : "SIGN"))}
 							onEnd={() => void endCall()}
 							ending={ending}
 							onFocusInput={focusInput}
