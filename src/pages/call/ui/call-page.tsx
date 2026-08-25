@@ -5,7 +5,7 @@ import { CallRoom } from "@/widgets/call-room";
 
 export function CallPage() {
 	const { mode, room: roomCode } = useSearch({ from: "/call" });
-	const { room, status, join } = useJoinCall();
+	const { room, status, role, join, accept, reject } = useJoinCall();
 
 	useEffect(() => {
 		join(roomCode, mode, mode === "DEAF");
@@ -14,7 +14,7 @@ export function CallPage() {
 	if (status !== "connected" || !room) {
 		return (
 			<main className="flex min-h-screen items-center justify-center">
-				<JoinCall status={status} />
+				<JoinCall status={status} role={role} onAccept={accept} onReject={reject} />
 			</main>
 		);
 	}
