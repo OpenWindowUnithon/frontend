@@ -8,6 +8,7 @@ import {
 	type CallRole,
 	createCall,
 	disconnectCall,
+	endCall,
 	getCallStatus,
 	joinCall,
 	rejectCall,
@@ -247,6 +248,17 @@ export function useJoinCall() {
 		},
 	});
 
+	// Only the creator (DEAF, per `isCreator` in `join`) can end the call for both sides.
+	// Leaving without ending it is just navigating away -- the unmount cleanup below
+	// already disconnects this participant's own slot.
+	const endMutation = useMutation({
+		mutationFn: () => {
+			const params = paramsRef.current;
+			if (!callId || !params?.isCreator) return Promise.resolve();
+			return endCall(callId, getOrCreateSessionKey("creator", params.roomCode));
+		},
+	});
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above join
 	useEffect(() => {
 		return () => {
@@ -273,8 +285,10 @@ export function useJoinCall() {
 
 	return {
 		...state,
+		isCreator: paramsRef.current?.isCreator ?? false,
 		join,
 		accept: acceptMutation.mutate,
 		reject: rejectMutation.mutate,
+		end: endMutation.mutateAsync,
 	};
 }
