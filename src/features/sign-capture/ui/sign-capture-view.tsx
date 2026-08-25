@@ -1,7 +1,6 @@
 import type { Room } from "livekit-client";
 import {
 	Activity,
-	ArrowRight,
 	Bot,
 	Camera,
 	CameraOff,
@@ -101,59 +100,44 @@ function ActiveSignOverlay({
 	wordBuffer: string[];
 	isComposing: boolean;
 }) {
-	if (activeSign) {
-		return (
-			<div className="flex w-full items-center justify-between rounded-xl border border-blue-500/40 bg-black/85 px-4 py-2.5 text-white shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95">
-				<div className="flex items-center gap-3">
-					<span className="text-2xl">{activeSign.icon}</span>
-					<div className="text-left">
-						<div className="flex items-center gap-2">
-							<span className="font-bold text-base text-white">{activeSign.label}</span>
-							<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-								{Math.round(activeSign.confidence * 100)}%
-							</span>
-						</div>
-						<p className="text-neutral-400 text-xs">{activeSign.description}</p>
-					</div>
-				</div>
-				<div className="flex items-center gap-1 font-medium text-emerald-400 text-xs">
-					<CheckCircle2 className="h-4 w-4" />
-					<span>실시간 인식됨</span>
-				</div>
-			</div>
-		);
-	}
-
-	if (wordBuffer.length > 0) {
-		return (
-			<div className="flex items-center gap-2 rounded-full border border-blue-500/30 bg-black/80 px-4 py-1.5 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
-				{isComposing ? (
-					<Activity className="h-3.5 w-3.5 animate-spin text-amber-400" />
-				) : (
-					<Sparkles className="h-3.5 w-3.5 text-blue-400" />
-				)}
-				<span className="font-medium text-neutral-300">누적 단어:</span>
-				<div className="flex items-center gap-1.5">
-					{wordBuffer.map((w, i, arr) => (
-						<span
-							key={w + arr.slice(0, i).filter((item) => item === w).length}
-							className="flex items-center gap-1"
-						>
-							<span className="rounded bg-blue-500/20 px-1.5 py-0.5 font-semibold text-blue-300">
-								{w}
-							</span>
-							{i < arr.length - 1 && <ArrowRight className="h-3 w-3 text-neutral-500" />}
-						</span>
-					))}
-				</div>
-			</div>
-		);
-	}
+	// Caption-style accumulated words ("날씨 맛있다"), not chips -- the live single-word
+	// indicator (below) is a separate, smaller strip so it no longer blocks the caption once
+	// a second word starts accumulating.
+	const caption = wordBuffer.length > 0 ? wordBuffer.join(" ") : null;
 
 	return (
-		<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
-			<Hand className="h-3.5 w-3.5 text-neutral-400" />
-			<span>수어 동작이나 제스처를 취하면 실시간으로 인식되고 문장으로 합성됩니다</span>
+		<div className="flex w-full flex-col items-center gap-1.5">
+			{activeSign && (
+				<div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-black/70 px-3 py-1 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
+					<span className="text-base">{activeSign.icon}</span>
+					<span className="font-semibold">{activeSign.label}</span>
+					<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
+						{Math.round(activeSign.confidence * 100)}%
+					</span>
+					<span className="flex items-center gap-1 font-medium text-emerald-400">
+						<CheckCircle2 className="h-3 w-3" />
+						인식 중
+					</span>
+				</div>
+			)}
+
+			{caption ? (
+				<div className="flex w-full items-center gap-2 rounded-2xl border border-blue-500/40 bg-black/85 px-4 py-3 text-white shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95">
+					{isComposing ? (
+						<Activity className="h-4 w-4 shrink-0 animate-spin text-amber-400" />
+					) : (
+						<Sparkles className="h-4 w-4 shrink-0 text-blue-400" />
+					)}
+					<span className="font-bold text-lg leading-snug">{caption}</span>
+				</div>
+			) : (
+				!activeSign && (
+					<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
+						<Hand className="h-3.5 w-3.5 text-neutral-400" />
+						<span>수어 동작이나 제스처를 취하면 실시간으로 인식되고 문장으로 합성됩니다</span>
+					</div>
+				)
+			)}
 		</div>
 	);
 }

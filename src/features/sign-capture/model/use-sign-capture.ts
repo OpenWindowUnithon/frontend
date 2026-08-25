@@ -90,9 +90,17 @@ function renderLandmarksToCanvas(
 interface PredictionState {
 	lastCandidate: string | null;
 	candidateStreak: number;
-	insertedForSegment: boolean;
+	lastConfirmedCandidate: string | null;
 }
 
+// Confirms a candidate once it has held steady for CONSECUTIVE_REQUIRED frames, as long as
+// it isn't the same word already confirmed last (which would just be the signer continuing
+// to hold the same pose). Gating on "already confirmed *this word*" rather than "already
+// confirmed *something* this segment" is what lets consecutive different words (A -> B with
+// no no-sign gap in between, since the recognizer doesn't reliably dip to null between two
+// signs performed back-to-back) each get confirmed on their own -- previously a single
+// shared `insertedForSegment` flag only re-armed after a sustained no-sign streak, so a
+// second word right after the first was silently dropped unless the signer paused.
 function updateCandidateStreak(
 	state: PredictionState,
 	candidate: string | null,
@@ -104,12 +112,15 @@ function updateCandidateStreak(
 		state.candidateStreak = 1;
 	}
 
-	if (candidate === null && state.candidateStreak >= NO_SIGN_STREAK_TO_RESET) {
-		state.insertedForSegment = false;
+	if (candidate === null) {
+		if (state.candidateStreak >= NO_SIGN_STREAK_TO_RESET) {
+			state.lastConfirmedCandidate = null;
+		}
+		return { isConfirmed: false };
 	}
 
-	if (candidate && state.candidateStreak >= CONSECUTIVE_REQUIRED && !state.insertedForSegment) {
-		state.insertedForSegment = true;
+	if (state.candidateStreak >= CONSECUTIVE_REQUIRED && state.lastConfirmedCandidate !== candidate) {
+		state.lastConfirmedCandidate = candidate;
 		return { isConfirmed: true };
 	}
 
@@ -141,7 +152,7 @@ export function useSignCapture(
 	const predictionStateRef = useRef<PredictionState>({
 		lastCandidate: null,
 		candidateStreak: 0,
-		insertedForSegment: false,
+		lastConfirmedCandidate: null,
 	});
 	const predictingRef = useRef(false);
 
@@ -328,6 +339,8 @@ export function useSignCapture(
 			const icon = meta?.icon ?? "🤟";
 			const desc = meta?.description ?? `KSL 수어: ${candidate}`;
 
+			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
+
 			if (candidate) {
 				setActiveSign({
 					id: `ksl_${candidate}`,
@@ -338,9 +351,14 @@ export function useSignCapture(
 					category: "action",
 					timestamp: Date.now(),
 				});
+			} else if (predictionStateRef.current.candidateStreak >= NO_SIGN_STREAK_TO_RESET) {
+				// Only clear once the "no sign" streak is sustained, not on every single null
+				// tick -- otherwise the live indicator flickers off during brief detection
+				// gaps mid-gesture. This mirrors the same threshold updateCandidateStreak uses
+				// to reset the segment, so "recognition ended" and "indicator cleared" agree.
+				setActiveSign(null);
 			}
 
-			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
 			if (candidate && isConfirmed) {
 				const kslSign: RecognizedSign = {
 					id: `ksl_${candidate}_${Date.now()}`,

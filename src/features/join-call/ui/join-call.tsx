@@ -1,7 +1,9 @@
 import { IconPhoneFill, IconPhoneXmarkFill } from "@karrotmarket/react-monochrome-icon";
-import { Badge, PrefixIcon } from "@seed-design/react";
+import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import type { CallRole } from "@/entities/call";
+import { snackbar } from "@/shared/lib";
 import { ActionButton, SeedAvatar as Avatar, IdentityPlaceholder } from "@/shared/ui";
 
 type JoinStatus =
@@ -42,6 +44,14 @@ function LoadingDots() {
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: explicit finite-state UI branches
 export function JoinCall(props: JoinCallProps) {
 	const navigate = useNavigate();
+	useEffect(() => {
+		if (props.status === "error") {
+			snackbar.error("연결하지 못했어요. 네트워크 상태를 확인한 뒤 다시 전화해 주세요.");
+		}
+	}, [props.status]);
+	useEffect(() => {
+		if (props.actionError) snackbar.error("요청을 처리하지 못했어요. 다시 시도해 주세요.");
+	}, [props.actionError]);
 	if (props.status === "connected" || props.status === "ended" || props.status === "idle")
 		return null;
 
@@ -71,18 +81,6 @@ export function JoinCall(props: JoinCallProps) {
 			<h2 className="mt-8 text-3xl font-bold tracking-tight">{props.contactName}</h2>
 			{props.contactName !== props.phone && (
 				<p className="mt-2 text-lg text-muted-foreground">{props.phone}</p>
-			)}
-
-			{failed && (
-				<>
-					<Badge className="mt-10" tone="critical" variant="weak" size="large">
-						연결 실패
-					</Badge>
-					<h3 className="mt-5 text-2xl font-bold text-destructive">연결하지 못했어요</h3>
-					<p className="mt-4 max-w-xs rounded-2xl bg-muted p-4 text-sm leading-6">
-						네트워크 상태를 확인한 뒤 다시 전화해 주세요.
-					</p>
-				</>
 			)}
 
 			{rejected && (
@@ -125,11 +123,6 @@ export function JoinCall(props: JoinCallProps) {
 			)}
 
 			<div className="mt-auto w-full max-w-sm pt-10">
-				{props.actionError && (
-					<p className="mb-3 text-sm font-medium text-destructive" role="alert">
-						요청을 처리하지 못했어요. 다시 시도해 주세요.
-					</p>
-				)}
 				{incoming && (
 					<div className="grid grid-cols-2 gap-3">
 						<ActionButton
