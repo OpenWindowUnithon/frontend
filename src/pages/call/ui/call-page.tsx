@@ -9,6 +9,7 @@ export function CallPage() {
 	const navigate = useNavigate();
 	const { room, status, join, leave } = useJoinCall();
 	const [seconds, setSeconds] = useState(0);
+	const [cancelling, setCancelling] = useState(false);
 
 	useEffect(() => {
 		join(roomCode, mode, mode === "DEAF");
@@ -20,19 +21,30 @@ export function CallPage() {
 		return () => window.clearInterval(timer);
 	}, [status]);
 
-	if (status !== "connected" || !room) {
+	if ((status !== "connected" && status !== "ended") || !room) {
 		return (
 			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card pb-[max(1.75rem,env(safe-area-inset-bottom))]">
 				<JoinCall status={status} contactName={contactName} phone={phone} />
 				<button
 					type="button"
+					disabled={cancelling}
 					className="mx-auto flex min-h-28 min-w-28 flex-col items-center justify-center gap-3 rounded-3xl text-sm font-bold text-destructive focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring"
-					onClick={() => navigate({ to: "/" })}
+					onClick={async () => {
+						setCancelling(true);
+						try {
+							await leave();
+							navigate({ to: "/" });
+						} catch (error) {
+							console.error("[call-page] cancel failed", error);
+						} finally {
+							setCancelling(false);
+						}
+					}}
 				>
 					<span className="grid size-17 place-items-center rounded-full bg-destructive text-white shadow-sm">
 						<IconPhoneXmarkFill className="size-8" aria-hidden />
 					</span>
-					전화 취소
+					{cancelling ? "취소 중…" : "전화 취소"}
 				</button>
 			</main>
 		);

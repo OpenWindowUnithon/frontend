@@ -1,5 +1,5 @@
 import axios from "axios";
-import { type Room, RoomEvent } from "livekit-client";
+import { ConnectionState, type Room, RoomEvent } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	type CallMode,
@@ -12,7 +12,7 @@ import {
 import { connectRoom } from "@/shared/lib";
 import { getOrCreateSessionKey } from "./session-keys";
 
-type JoinCallStatus = "idle" | "connecting" | "connected" | "reconnecting" | "error";
+type JoinCallStatus = "idle" | "connecting" | "connected" | "reconnecting" | "ended" | "error";
 
 interface JoinCallState {
 	room: Room | null;
@@ -59,6 +59,24 @@ export function useJoinCall() {
 		heartbeatRef.current = undefined;
 	};
 
+	const notifyLeave = (params: JoinParams, callId: string) =>
+		params.isCreator
+			? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
+			: disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode));
+
+	async function openServerSession(params: JoinParams, participantKey: string) {
+		if (params.isCreator) {
+			await createCall(params.roomCode, getOrCreateSessionKey("creator", params.roomCode));
+		}
+		return joinCall(params.roomCode, params.mode, participantKey);
+	}
+
+	async function releaseStaleSession(params: JoinParams, callId: string, generation: number) {
+		if (isCurrent(generation)) return false;
+		await notifyLeave(params, callId).catch(() => {});
+		return true;
+	}
+
 	// "connected" on success; "retry" for anything that might resolve itself
 	// (network blip, transient 5xx); "fatal" for errors retrying can't fix
 	// (4xx — bad room code, rejected mode, etc.) so we can fail fast instead of
@@ -71,12 +89,12 @@ export function useJoinCall() {
 		if (!isCurrent(generation)) return "retry";
 		setState((prev) => ({ ...prev, status: isRetry ? "reconnecting" : "connecting" }));
 		try {
-			const { roomCode, mode, isCreator } = params;
+			const { roomCode } = params;
 			const participantKey = getOrCreateSessionKey("participant", roomCode);
-			if (isCreator) {
-				await createCall(roomCode, getOrCreateSessionKey("creator", roomCode));
-			}
-			const result = await joinCall(roomCode, mode, participantKey);
+			const result = await openServerSession(params, participantKey);
+			stateRef.current = { ...stateRef.current, callId: result.callId };
+			setState((prev) => ({ ...prev, callId: result.callId }));
+			if (await releaseStaleSession(params, result.callId, generation)) return "retry";
 			const room = await connectRoom(result.livekitUrl, result.token);
 
 			if (!isCurrent(generation)) {
@@ -155,21 +173,24 @@ export function useJoinCall() {
 	const leave = useCallback(async () => {
 		manualLeaveRef.current = true;
 		stopHeartbeat();
+		const generation = generationRef.current;
 
 		const params = paramsRef.current;
 		const { room, callId } = stateRef.current;
 		try {
 			if (params && callId) {
-				await (params.isCreator
-					? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
-					: disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode)));
+				await notifyLeave(params, callId);
 			}
 			generationRef.current += 1;
-			stateRef.current = { room: null, status: "idle", callId: null };
+			const endedState: JoinCallState = { room, status: "ended", callId: null };
+			stateRef.current = endedState;
+			setState(endedState);
 			room?.disconnect();
 		} catch (error) {
 			manualLeaveRef.current = false;
-			if (params && callId) {
+			if (room?.state === ConnectionState.Disconnected) {
+				void retryLoop(generation);
+			} else if (params && callId) {
 				const participantKey = getOrCreateSessionKey("participant", params.roomCode);
 				heartbeatRef.current = setInterval(() => {
 					sendHeartbeat(callId, participantKey).catch(() => {});
@@ -188,10 +209,7 @@ export function useJoinCall() {
 			const params = paramsRef.current;
 			const { room, callId } = stateRef.current;
 			if (params && callId) {
-				const notifyServer = params.isCreator
-					? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
-					: disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode));
-				notifyServer.catch(() => {});
+				notifyLeave(params, callId).catch(() => {});
 			}
 			room?.disconnect();
 		};

@@ -13,33 +13,56 @@ export type MicState = "off" | "on" | "muted";
 export function useToggleMic(room: Room | null) {
 	const [state, setState] = useState<MicState>("off");
 	const trackRef = useRef<LocalAudioTrack | null>(null);
-
-	const togglePower = useCallback(async () => {
-		if (!room) return;
-		let createdTrack: LocalAudioTrack | null = null;
-		try {
-			if (trackRef.current) {
-				const track = trackRef.current;
-				await room.localParticipant.unpublishTrack(track);
-				track.stop();
-				trackRef.current = null;
-				setState("off");
-			} else {
-				const track = await createLocalAudioTrack({
-					echoCancellation: true,
-					noiseSuppression: true,
-					autoGainControl: true,
-				});
-				createdTrack = track;
-				await room.localParticipant.publishTrack(track);
-				trackRef.current = track;
-				setState("on");
-			}
-		} catch {
-			createdTrack?.stop();
+	const powerOperationRef = useRef<Promise<void>>(Promise.resolve());
+	const syncWithRoom = useCallback(() => {
+		if (!room) {
+			trackRef.current = null;
 			setState("off");
+			return;
 		}
+		const publication = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+		const track = publication?.track;
+		if (!(track instanceof LocalAudioTrack) || track.mediaStreamTrack.readyState !== "live") {
+			trackRef.current = null;
+			setState("off");
+			return;
+		}
+		trackRef.current = track;
+		setState(track.isMuted ? "muted" : "on");
 	}, [room]);
+
+	const togglePower = useCallback(() => {
+		if (!room) return Promise.resolve();
+		const operation = powerOperationRef.current
+			.catch(() => {})
+			.then(async () => {
+				let createdTrack: LocalAudioTrack | null = null;
+				try {
+					if (trackRef.current) {
+						const track = trackRef.current;
+						await room.localParticipant.unpublishTrack(track);
+						track.stop();
+						trackRef.current = null;
+						setState("off");
+					} else {
+						const track = await createLocalAudioTrack({
+							echoCancellation: true,
+							noiseSuppression: true,
+							autoGainControl: true,
+						});
+						createdTrack = track;
+						await room.localParticipant.publishTrack(track);
+						trackRef.current = track;
+						setState("on");
+					}
+				} catch {
+					createdTrack?.stop();
+					syncWithRoom();
+				}
+			});
+		powerOperationRef.current = operation;
+		return operation;
+	}, [room, syncWithRoom]);
 
 	const toggleMute = useCallback(async () => {
 		const track = trackRef.current;
@@ -54,25 +77,8 @@ export function useToggleMic(room: Room | null) {
 	}, []);
 
 	useEffect(() => {
-		if (!room) {
-			trackRef.current = null;
-			setState("off");
-			return;
-		}
-
-		const syncWithRoom = () => {
-			const publication = room.localParticipant.getTrackPublication(Track.Source.Microphone);
-			const track = publication?.track;
-			if (!(track instanceof LocalAudioTrack)) {
-				trackRef.current = null;
-				setState("off");
-				return;
-			}
-			trackRef.current = track;
-			setState(track.isMuted ? "muted" : "on");
-		};
-
 		syncWithRoom();
+		if (!room) return;
 		room.on(RoomEvent.LocalTrackPublished, syncWithRoom);
 		room.on(RoomEvent.LocalTrackUnpublished, syncWithRoom);
 		room.on(RoomEvent.TrackMuted, syncWithRoom);
@@ -85,7 +91,7 @@ export function useToggleMic(room: Room | null) {
 			room.off(RoomEvent.TrackUnmuted, syncWithRoom);
 			trackRef.current?.stop();
 		};
-	}, [room]);
+	}, [room, syncWithRoom]);
 
 	return { state, togglePower, toggleMute };
 }

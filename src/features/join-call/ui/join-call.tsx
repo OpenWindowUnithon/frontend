@@ -5,6 +5,7 @@ const STATUS_LABEL = {
 	idle: "",
 	connecting: "통화 연결 중...",
 	connected: "",
+	ended: "",
 	reconnecting: "연결이 끊겼어요. 다시 연결 중...",
 	error: "통화 연결에 실패했어요. 새로고침 후 다시 시도해주세요.",
 } as const;

@@ -10,7 +10,7 @@ import {
 import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import type { Room } from "livekit-client";
-import { type ReactNode, useRef, useState } from "react";
+import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
 import { type CallMode, type CommunicationMode, sendChatText } from "@/entities/call";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
 import { CaptionList } from "@/features/receive-captions";
@@ -27,6 +27,12 @@ interface CallRoomProps {
 	seconds: number;
 	onEnd: () => Promise<void>;
 }
+
+type TextMessage = {
+	id: number;
+	text: string;
+	state: "sending" | "sent" | "failed";
+};
 
 function formatDuration(seconds: number) {
 	return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
@@ -74,15 +80,19 @@ function TextCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactNa
 function TextCall({
 	room,
 	renderControls,
+	draft,
+	setDraft,
+	messages,
+	setMessages,
 }: {
 	room: Room;
 	renderControls: (focusInput: () => void) => ReactNode;
+	draft: string;
+	setDraft: Dispatch<SetStateAction<string>>;
+	messages: TextMessage[];
+	setMessages: Dispatch<SetStateAction<TextMessage[]>>;
 }) {
-	const [draft, setDraft] = useState("");
 	const inputRef = useRef<HTMLTextAreaElement>(null);
-	const [messages, setMessages] = useState<
-		Array<{ id: number; text: string; state: "sending" | "sent" | "failed" }>
-	>([]);
 
 	const deliver = async (text: string, existingId?: number) => {
 		const clean = text.trim();
@@ -317,6 +327,8 @@ export function CallRoom(props: CallRoomProps) {
 	const [ending, setEnding] = useState(false);
 	const [endError, setEndError] = useState(false);
 	const [communication, setCommunication] = useState(props.communication);
+	const [textDraft, setTextDraft] = useState("");
+	const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
 	const endCall = async () => {
 		setEnding(true);
 		setEndError(false);
@@ -379,6 +391,10 @@ export function CallRoom(props: CallRoomProps) {
 			{communication === "TEXT" ? (
 				<TextCall
 					room={props.room}
+					draft={textDraft}
+					setDraft={setTextDraft}
+					messages={textMessages}
+					setMessages={setTextMessages}
 					renderControls={(focusInput) => (
 						<TextCallControls
 							communication={communication}

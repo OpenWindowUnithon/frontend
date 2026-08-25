@@ -53,6 +53,7 @@ export function SignCaptureView({ room }: { room: Room | null }) {
 					</p>
 					<div className="flex gap-2">
 						<Input
+							aria-label="등록할 단어"
 							placeholder="예: 병원"
 							value={newWord}
 							onChange={(event) => setNewWord(event.target.value)}

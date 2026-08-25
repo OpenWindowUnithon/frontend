@@ -31,10 +31,8 @@ function formatPhoneNumber(value: string) {
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
-function createRoomCode(digits: string) {
-	const time = Date.now().toString(36);
-	const nonce = crypto.randomUUID().slice(0, 8);
-	return `call-${digits}-${time}-${nonce}`;
+function createRoomCode() {
+	return `call-${crypto.randomUUID()}`;
 }
 
 export function HomePage() {
@@ -49,7 +47,7 @@ export function HomePage() {
 		navigate({
 			to: "/call",
 			search: {
-				room: createRoomCode(digits),
+				room: createRoomCode(),
 				mode: "DEAF",
 				communication,
 				contactName: phone,
@@ -86,11 +84,6 @@ export function HomePage() {
 					<p className="min-h-11 text-center text-4xl leading-11 font-light tracking-tight tabular-nums">
 						{phone || "전화번호 입력"}
 					</p>
-					{digits && (
-						<button type="button" className="mt-1 text-sm font-medium text-fg-informative">
-							새로운 연락처에 추가
-						</button>
-					)}
 				</div>
 
 				<div className="mt-1 grid w-full max-w-[296px] grid-cols-3 gap-x-7 gap-y-3">
