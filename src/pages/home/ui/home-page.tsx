@@ -3,6 +3,7 @@ import { Icon } from "@seed-design/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import axios from "axios";
+import { hapticTrigger } from "ios-haptics";
 import { Camera } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -229,6 +230,7 @@ export function HomePage() {
 					{KEYS.map(([number, letters]) => (
 						<button
 							key={number}
+							ref={hapticTrigger}
 							type="button"
 							className="mx-auto grid size-[68px] touch-manipulation appearance-none grid-rows-[38px_12px] content-center place-items-center rounded-full border-0 bg-secondary p-0 text-foreground shadow-none transition select-none active:scale-95 active:bg-bg-neutral-weak-pressed"
 							onPointerDown={() => pressKey(number)}
