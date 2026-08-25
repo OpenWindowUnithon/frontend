@@ -5,6 +5,7 @@ import {
 	type CallMode,
 	createCall,
 	disconnectCall,
+	endCall,
 	joinCall,
 	sendHeartbeat,
 } from "@/entities/call";
@@ -148,6 +149,36 @@ export function useJoinCall() {
 		}
 	}, []);
 
+	// Explicit user-initiated leave. Mark it manual before disconnecting so the
+	// RoomEvent.Disconnected handler cannot start the retry loop again.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stopHeartbeat is a refs-only closure
+	const leave = useCallback(async () => {
+		manualLeaveRef.current = true;
+		stopHeartbeat();
+
+		const params = paramsRef.current;
+		const { room, callId } = stateRef.current;
+		try {
+			if (params && callId) {
+				await (params.isCreator
+					? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
+					: disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode)));
+			}
+			generationRef.current += 1;
+			stateRef.current = { room: null, status: "idle", callId: null };
+			room?.disconnect();
+		} catch (error) {
+			manualLeaveRef.current = false;
+			if (params && callId) {
+				const participantKey = getOrCreateSessionKey("participant", params.roomCode);
+				heartbeatRef.current = setInterval(() => {
+					sendHeartbeat(callId, participantKey).catch(() => {});
+				}, HEARTBEAT_INTERVAL_MS);
+			}
+			throw error;
+		}
+	}, []);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above join
 	useEffect(() => {
 		return () => {
@@ -157,13 +188,14 @@ export function useJoinCall() {
 			const params = paramsRef.current;
 			const { room, callId } = stateRef.current;
 			if (params && callId) {
-				disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode)).catch(
-					() => {},
-				);
+				const notifyServer = params.isCreator
+					? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
+					: disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode));
+				notifyServer.catch(() => {});
 			}
 			room?.disconnect();
 		};
 	}, []);
 
-	return { ...state, join };
+	return { ...state, join, leave };
 }

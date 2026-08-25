@@ -8,11 +8,7 @@ import { Icon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { CommunicationMode } from "@/entities/call";
-import { ActionButton } from "@/shared/ui/seed-design/ui/action-button";
-import {
-	SegmentedControl,
-	SegmentedControlItem,
-} from "@/shared/ui/seed-design/ui/segmented-control";
+import { ActionButton, SegmentedControl, SegmentedControlItem } from "@/shared/ui";
 
 const KEYS = [
 	["1", ""],
@@ -35,6 +31,12 @@ function formatPhoneNumber(value: string) {
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
+function createRoomCode(digits: string) {
+	const time = Date.now().toString(36);
+	const nonce = crypto.randomUUID().slice(0, 8);
+	return `call-${digits}-${time}-${nonce}`;
+}
+
 export function HomePage() {
 	const navigate = useNavigate();
 	const [digits, setDigits] = useState("");
@@ -47,10 +49,10 @@ export function HomePage() {
 		navigate({
 			to: "/call",
 			search: {
-				room: `call-${digits}`,
+				room: createRoomCode(digits),
 				mode: "DEAF",
 				communication,
-				contactName: "전화번호",
+				contactName: phone,
 				phone,
 			},
 		});

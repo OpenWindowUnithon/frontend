@@ -1,20 +1,22 @@
 import {
-	IconCheckmarkFill,
-	IconLockLine,
+	IconGridDot5Fill,
+	IconHandWaveFill,
+	IconHorizline2VerticalChatbubbleRectangularRightFill,
 	IconPaperplaneFill,
 	IconPhoneXmarkFill,
+	IconSpeakerWave2Fill,
+	IconSpeakerWave2SlashFill,
 } from "@karrotmarket/react-monochrome-icon";
 import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import type { Room } from "livekit-client";
-import { useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { type CallMode, type CommunicationMode, sendChatText } from "@/entities/call";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
 import { CaptionList } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
 import { MicToggleButton } from "@/features/toggle-mic";
-import { ActionButton } from "@/shared/ui/seed-design/ui/action-button";
-import { TextField, TextFieldTextarea } from "@/shared/ui/seed-design/ui/text-field";
+import { ActionButton, TextField, TextFieldTextarea } from "@/shared/ui";
 
 interface CallRoomProps {
 	room: Room;
@@ -23,6 +25,7 @@ interface CallRoomProps {
 	contactName: string;
 	phone: string;
 	seconds: number;
+	onEnd: () => Promise<void>;
 }
 
 function formatDuration(seconds: number) {
@@ -33,26 +36,50 @@ function CallHeader({
 	contactName,
 	seconds,
 	onEnd,
-	onSwitch,
-	communication,
-}: Omit<CallRoomProps, "room" | "mode" | "phone"> & { onEnd: () => void; onSwitch: () => void }) {
+	ending,
+}: Pick<CallRoomProps, "contactName" | "seconds"> & { onEnd: () => void; ending: boolean }) {
 	return (
-		<header className="grid grid-cols-[72px_1fr_72px] items-center border-b px-5 py-4">
-			<ActionButton variant="ghost" color="fg.critical" onClick={onEnd}>
-				<PrefixIcon svg={<IconPhoneXmarkFill />} /> 종료
-			</ActionButton>
-			<h1 className="text-center text-lg font-bold">
-				{contactName} · {formatDuration(seconds)}
-			</h1>
-			<ActionButton variant="ghost" onClick={onSwitch}>
-				{communication === "SIGN" ? "텍스트" : "수어"}
-			</ActionButton>
+		<header className="flex items-center gap-4 px-5 pb-4 pt-6">
+			<div className="min-w-0 flex-1">
+				<h1 className="truncate text-xl font-bold tracking-tight">{contactName}</h1>
+				<p className="mt-0.5 text-base tabular-nums text-muted-foreground">
+					<span className="sr-only">통화 시간 </span>
+					{formatDuration(seconds)}
+				</p>
+			</div>
+			<button
+				type="button"
+				onClick={onEnd}
+				disabled={ending}
+				className="min-h-12 shrink-0 rounded-full bg-destructive px-5 text-base font-bold text-white transition-colors focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
+			>
+				{ending ? "종료 중…" : "종료"}
+			</button>
 		</header>
 	);
 }
 
-function TextCall({ room }: { room: Room }) {
+function TextCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactName" | "seconds">) {
+	return (
+		<header className="px-6 pb-4 pt-7 text-center">
+			<p className="text-sm font-medium tabular-nums text-muted-foreground">
+				<span className="sr-only">통화 시간 </span>
+				{formatDuration(seconds)}
+			</p>
+			<h1 className="mt-1 truncate text-2xl font-bold tracking-tight">{contactName}</h1>
+		</header>
+	);
+}
+
+function TextCall({
+	room,
+	renderControls,
+}: {
+	room: Room;
+	renderControls: (focusInput: () => void) => ReactNode;
+}) {
 	const [draft, setDraft] = useState("");
+	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const [messages, setMessages] = useState<
 		Array<{ id: number; text: string; state: "sending" | "sent" | "failed" }>
 	>([]);
@@ -81,114 +108,188 @@ function TextCall({ room }: { room: Room }) {
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex-1 space-y-4 overflow-y-auto px-5 py-6" aria-live="polite">
-				<div className="rounded-2xl bg-muted p-4">
-					<p className="mb-1 text-xs font-medium text-muted-foreground">상대방 · 음성 → 텍스트</p>
-					<CaptionList room={room} />
-				</div>
+			<div
+				className="min-h-40 flex-1 space-y-3 overflow-y-auto px-5 pb-4 pt-6"
+				aria-label="통화 대화"
+				aria-live="polite"
+				role="log"
+			>
+				<CaptionList room={room} />
 				{messages.map((message) => (
-					<div className="ml-auto max-w-[86%]" key={message.id}>
+					<div className="flex justify-end" key={message.id}>
 						<div
-							className={`rounded-2xl rounded-br-md bg-foreground p-4 text-background ${message.state === "failed" ? "outline-2 outline-dashed outline-destructive" : ""}`}
+							className={`w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground ${message.state === "failed" ? "outline-2 outline-dashed outline-destructive" : ""}`}
 						>
-							<p className="mb-1 text-xs opacity-70">나 · AI 음성</p>
-							<p className="text-lg font-medium">{message.text}</p>
+							<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
+								{message.text}
+							</p>
 							{message.state === "failed" && (
-								<ActionButton
-									variant="neutralOutline"
-									size="large"
-									className="mt-3 h-12 w-full border-background/60 text-background hover:text-foreground"
-									onClick={() => deliver(message.text, message.id)}
-								>
-									다시 전달
-								</ActionButton>
+								<div className="mt-3 border-t border-background/30 pt-3">
+									<p className="mb-2 text-sm text-background/80">전달하지 못했어요</p>
+									<ActionButton
+										variant="neutralOutline"
+										size="large"
+										className="h-11 w-full border-background/60 text-background hover:text-foreground"
+										onClick={() => deliver(message.text, message.id)}
+									>
+										다시 전달
+									</ActionButton>
+								</div>
 							)}
 						</div>
-						<p
-							className={`mt-1 text-right text-sm ${message.state === "failed" ? "text-destructive" : "text-muted-foreground"}`}
-						>
-							{message.state === "sending"
-								? "전달 중…"
-								: message.state === "sent"
-									? "전달됨"
-									: "전달 실패 · 원문은 유지됐어요"}
-						</p>
 					</div>
 				))}
-				<p className="text-sm text-muted-foreground">
-					상대방의 새 발화는 이 영역의 가장 아래에서 실시간으로 갱신돼요.
-				</p>
 			</div>
+			<div className="px-5 pb-4">{renderControls(() => inputRef.current?.focus())}</div>
 			<form
-				className="border-t p-5"
+				className="bg-card px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
 				onSubmit={(event) => {
 					event.preventDefault();
 					void deliver(draft);
 				}}
 			>
-				<TextField
-					value={draft}
-					onValueChange={({ value }) => setDraft(value)}
-					description="입력한 문장을 확인한 뒤 AI 음성으로 전달해요."
-					size="large"
-				>
-					<TextFieldTextarea
-						aria-label="상대방에게 전달할 내용"
-						placeholder="상대방에게 전달할 내용을 입력하세요"
-						style={{ minHeight: 96, maxHeight: 180 }}
-					/>
-				</TextField>
-				<ActionButton
-					variant="neutralSolid"
-					size="large"
-					className="mt-3 w-full"
-					disabled={!draft.trim()}
-					type="submit"
-				>
-					<PrefixIcon svg={<IconPaperplaneFill />} /> AI 음성으로 전달
-				</ActionButton>
+				<div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+					<TextField value={draft} onValueChange={({ value }) => setDraft(value)} size="large">
+						<TextFieldTextarea
+							ref={inputRef}
+							aria-label="상대방에게 전달할 내용"
+							placeholder="메시지 입력"
+							style={{ minHeight: 56, maxHeight: 120 }}
+						/>
+					</TextField>
+					<ActionButton
+						variant="neutralSolid"
+						size="large"
+						className="h-14 shrink-0 rounded-full px-4"
+						disabled={!draft.trim()}
+						type="submit"
+						aria-label="AI 음성으로 전달"
+					>
+						<PrefixIcon svg={<IconPaperplaneFill />} /> 전달
+					</ActionButton>
+				</div>
 			</form>
 		</div>
 	);
 }
 
-function EndedCall({
-	contactName,
-	phone,
-	seconds,
+function TextCallControls({
 	communication,
-}: Omit<CallRoomProps, "room" | "mode">) {
-	const navigate = useNavigate();
-	const maskedPhone = phone.replace(/(\d{3})-?\d{4}-(\d{4})/, "$1-****-$2");
+	onSwitch,
+	onEnd,
+	ending,
+	onFocusInput,
+}: {
+	communication: CommunicationMode;
+	onSwitch: () => void;
+	onEnd: () => void;
+	ending: boolean;
+	onFocusInput: () => void;
+}) {
+	const [speakerOff, setSpeakerOff] = useState(false);
+	const toggleSpeaker = () => {
+		const next = !speakerOff;
+		setSpeakerOff(next);
+		for (const audio of document.querySelectorAll("audio")) audio.muted = next;
+	};
+	const controls = [
+		{
+			label: speakerOff ? "소리 켜기" : "소리 끄기",
+			icon: speakerOff ? IconSpeakerWave2SlashFill : IconSpeakerWave2Fill,
+			onClick: toggleSpeaker,
+			active: speakerOff,
+		},
+		{
+			label: communication === "SIGN" ? "텍스트" : "수어",
+			icon:
+				communication === "SIGN"
+					? IconHorizline2VerticalChatbubbleRectangularRightFill
+					: IconHandWaveFill,
+			onClick: onSwitch,
+			active: false,
+		},
+		{
+			label: ending ? "종료 중" : "종료",
+			icon: IconPhoneXmarkFill,
+			onClick: onEnd,
+			active: false,
+			destructive: true,
+			disabled: ending,
+		},
+		{
+			label: "입력",
+			icon: IconGridDot5Fill,
+			onClick: onFocusInput,
+			active: false,
+		},
+	];
+
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 py-10 text-center">
+		<fieldset className="grid grid-cols-4 gap-2" aria-label="통화 제어">
+			<legend className="sr-only">통화 제어</legend>
+			{controls.map((control) => {
+				const Icon = control.icon;
+				return (
+					<button
+						key={control.label}
+						type="button"
+						onClick={control.onClick}
+						disabled={control.disabled}
+						aria-pressed={control.active}
+						className="flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl text-xs font-semibold focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
+					>
+						<span
+							className={`grid size-13 place-items-center rounded-full ${control.destructive ? "bg-destructive text-white" : control.active ? "bg-foreground text-background" : "bg-muted text-foreground"}`}
+						>
+							<Icon className="size-6" aria-hidden />
+						</span>
+						{control.label}
+					</button>
+				);
+			})}
+		</fieldset>
+	);
+}
+
+function CallControls({
+	communication,
+	onSwitch,
+}: {
+	communication: CommunicationMode;
+	onSwitch: () => void;
+}) {
+	return (
+		<fieldset className="flex px-5 pb-4">
+			<legend className="sr-only">통화 제어</legend>
+			<button
+				type="button"
+				onClick={onSwitch}
+				className="flex min-h-18 min-w-20 flex-col items-center justify-center gap-1.5 rounded-2xl text-sm font-semibold focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring"
+			>
+				<span className="grid size-12 place-items-center rounded-full bg-card">
+					{communication === "SIGN" ? (
+						<IconHorizline2VerticalChatbubbleRectangularRightFill className="size-6" aria-hidden />
+					) : (
+						<IconHandWaveFill className="size-6" aria-hidden />
+					)}
+				</span>
+				{communication === "SIGN" ? "텍스트로 전환" : "수어로 전환"}
+			</button>
+		</fieldset>
+	);
+}
+
+function EndedCall({ contactName, seconds }: Omit<CallRoomProps, "room" | "mode" | "onEnd">) {
+	const navigate = useNavigate();
+	return (
+		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-10 text-center">
 			<div className="flex flex-1 flex-col items-center justify-center">
-				<div className="grid size-24 place-items-center rounded-full bg-foreground text-background">
-					<IconCheckmarkFill className="size-12" aria-hidden />
-				</div>
-				<h1 className="mt-8 text-3xl font-bold">통화가 종료되었습니다</h1>
-				<p className="mt-5 text-2xl font-bold">{contactName}</p>
-				<p className="mt-1 text-muted-foreground">{maskedPhone}</p>
-				<div className="mt-10 grid w-full grid-cols-2 border-y py-5">
-					<div>
-						<p className="text-sm text-muted-foreground">통화 시간</p>
-						<strong>{formatDuration(seconds)}</strong>
-					</div>
-					<div className="border-l">
-						<p className="text-sm text-muted-foreground">통화 방식</p>
-						<strong>{communication === "SIGN" ? "수어" : "텍스트"}</strong>
-					</div>
-				</div>
-				<div className="mt-7 w-full rounded-2xl bg-muted p-5 text-left">
-					<IconLockLine className="mb-3 size-7" aria-hidden />
-					<strong className="block text-lg">통화 내용은 이 기기에 저장되지 않았어요</strong>
-					<p className="mt-2 text-sm leading-6 text-muted-foreground">
-						필요한 문장만 직접 선택해 메모로 남길 수 있어요.
-					</p>
-					<ActionButton variant="neutralOutline" size="large" className="mt-4 w-full">
-						선택한 문장을 메모로 남기기
-					</ActionButton>
-				</div>
+				<h1 className="text-2xl font-bold">통화가 종료되었습니다</h1>
+				<p className="mt-6 text-2xl font-bold">{contactName}</p>
+				<p className="mt-2 text-base tabular-nums text-muted-foreground">
+					<span className="sr-only">통화 시간 </span>
+					{formatDuration(seconds)}
+				</p>
 			</div>
 			<ActionButton
 				variant="neutralSolid"
@@ -198,16 +299,13 @@ function EndedCall({
 			>
 				완료
 			</ActionButton>
-			<ActionButton variant="ghost" className="mt-2" onClick={() => navigate({ to: "/" })}>
-				다시 전화
-			</ActionButton>
 		</main>
 	);
 }
 
 function HearingRoom({ room }: { room: Room }) {
 	return (
-		<div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
+		<div className="flex flex-1 flex-col items-center justify-center gap-6 px-5 py-8">
 			<MicToggleButton room={room} />
 			<AgentAudioPlayer room={room} />
 		</div>
@@ -216,26 +314,86 @@ function HearingRoom({ room }: { room: Room }) {
 
 export function CallRoom(props: CallRoomProps) {
 	const [ended, setEnded] = useState(false);
+	const [ending, setEnding] = useState(false);
+	const [endError, setEndError] = useState(false);
 	const [communication, setCommunication] = useState(props.communication);
+	const endCall = async () => {
+		setEnding(true);
+		setEndError(false);
+		try {
+			await props.onEnd();
+			setEnded(true);
+		} catch {
+			setEndError(true);
+		} finally {
+			setEnding(false);
+		}
+	};
 	if (ended) return <EndedCall {...props} communication={communication} />;
-	if (props.mode === "HEARING") return <HearingRoom room={props.room} />;
+	if (props.mode === "HEARING") {
+		return (
+			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
+				<section className="mx-4 mt-4 rounded-3xl bg-muted" aria-label="통화 정보와 제어">
+					<CallHeader
+						contactName={props.contactName}
+						seconds={props.seconds}
+						onEnd={() => void endCall()}
+						ending={ending}
+					/>
+				</section>
+				{endError && (
+					<p className="px-5 py-2 text-center text-sm text-destructive" role="alert">
+						통화를 종료하지 못했어요. 다시 시도해 주세요.
+					</p>
+				)}
+				<HearingRoom room={props.room} />
+			</main>
+		);
+	}
 
 	return (
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
-			<CallHeader
-				{...props}
-				communication={communication}
-				onEnd={() => setEnded(true)}
-				onSwitch={() => setCommunication((value) => (value === "SIGN" ? "TEXT" : "SIGN"))}
-			/>
 			{communication === "TEXT" ? (
-				<TextCall room={props.room} />
+				<section aria-label="통화 정보">
+					<TextCallHeader contactName={props.contactName} seconds={props.seconds} />
+				</section>
 			) : (
-				<div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-5">
-					<div className="rounded-2xl bg-muted p-4">
-						<p className="mb-2 text-xs font-medium text-muted-foreground">상대방 · 음성 → 텍스트</p>
+				<section className="mx-4 mt-4 rounded-3xl bg-muted" aria-label="통화 정보와 제어">
+					<CallHeader
+						contactName={props.contactName}
+						seconds={props.seconds}
+						onEnd={() => void endCall()}
+						ending={ending}
+					/>
+					<CallControls
+						communication={communication}
+						onSwitch={() => setCommunication((value) => (value === "SIGN" ? "TEXT" : "SIGN"))}
+					/>
+				</section>
+			)}
+			{endError && (
+				<p className="px-5 py-2 text-center text-sm text-destructive" role="alert">
+					통화를 종료하지 못했어요. 다시 시도해 주세요.
+				</p>
+			)}
+			{communication === "TEXT" ? (
+				<TextCall
+					room={props.room}
+					renderControls={(focusInput) => (
+						<TextCallControls
+							communication={communication}
+							onSwitch={() => setCommunication((value) => (value === "SIGN" ? "TEXT" : "SIGN"))}
+							onEnd={() => void endCall()}
+							ending={ending}
+							onFocusInput={focusInput}
+						/>
+					)}
+				/>
+			) : (
+				<div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
+					<section className="rounded-2xl bg-muted px-4 py-3" aria-label="상대방 음성 자막">
 						<CaptionList room={props.room} />
-					</div>
+					</section>
 					<SignCaptureView room={props.room} />
 				</div>
 			)}

@@ -1,15 +1,13 @@
 import { IconPhoneXmarkFill } from "@karrotmarket/react-monochrome-icon";
-import { PrefixIcon } from "@seed-design/react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { JoinCall, useJoinCall } from "@/features/join-call";
-import { ActionButton } from "@/shared/ui/seed-design/ui/action-button";
 import { CallRoom } from "@/widgets/call-room";
 
 export function CallPage() {
 	const { mode, room: roomCode, communication, contactName, phone } = useSearch({ from: "/call" });
 	const navigate = useNavigate();
-	const { room, status, join } = useJoinCall();
+	const { room, status, join, leave } = useJoinCall();
 	const [seconds, setSeconds] = useState(0);
 
 	useEffect(() => {
@@ -24,19 +22,18 @@ export function CallPage() {
 
 	if (status !== "connected" || !room) {
 		return (
-			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card pb-7">
-				<header className="border-b py-5 text-center text-xl font-bold">
-					{communication === "SIGN" ? "수어 통화" : "텍스트 통화"}
-				</header>
+			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card pb-[max(1.75rem,env(safe-area-inset-bottom))]">
 				<JoinCall status={status} contactName={contactName} phone={phone} />
-				<ActionButton
-					variant="ghost"
-					color="fg.critical"
-					className="mx-auto"
+				<button
+					type="button"
+					className="mx-auto flex min-h-28 min-w-28 flex-col items-center justify-center gap-3 rounded-3xl text-sm font-bold text-destructive focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring"
 					onClick={() => navigate({ to: "/" })}
 				>
-					<PrefixIcon svg={<IconPhoneXmarkFill />} /> 전화 취소
-				</ActionButton>
+					<span className="grid size-17 place-items-center rounded-full bg-destructive text-white shadow-sm">
+						<IconPhoneXmarkFill className="size-8" aria-hidden />
+					</span>
+					전화 취소
+				</button>
 			</main>
 		);
 	}
@@ -49,6 +46,7 @@ export function CallPage() {
 			contactName={contactName}
 			phone={phone}
 			seconds={seconds}
+			onEnd={leave}
 		/>
 	);
 }
