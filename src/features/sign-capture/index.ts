@@ -1,8 +1,4 @@
-export {
-	type RecognizedSign,
-	recognizeSignGesture,
-	SignStabilityFilter,
-} from "./model/sign-recognizer";
+export type { RecognizedSign } from "./model/types";
 export {
 	type UseSignCaptureReturn,
 	useSignCapture,

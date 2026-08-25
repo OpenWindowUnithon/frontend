@@ -9,8 +9,13 @@ import { sendChatText } from "@/entities/call";
 import type { CaptionType } from "@/entities/caption";
 import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
 import { type ConversationTurn, composeSignSentence } from "../api/sign-api";
-import { recognizeArmPoseSign } from "./arm-pose-recognizer";
-import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
+import {
+	clearReference,
+	DEFAULT_DTW_THRESHOLD,
+	listReferences,
+	matchReference,
+	saveReference,
+} from "./dtw";
 import {
 	extractFeatures,
 	latestPoseLandmarks,
@@ -18,7 +23,7 @@ import {
 	splitHandsByHandedness,
 } from "./landmarks";
 import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
-import { type RecognizedSign, recognizeSignGesture, SignStabilityFilter } from "./sign-recognizer";
+import type { RecognizedSign } from "./types";
 
 export interface UseSignCaptureReturn {
 	videoRef: RefObject<HTMLVideoElement | null>;
@@ -30,7 +35,6 @@ export interface UseSignCaptureReturn {
 	showSkeleton: boolean;
 	detectedHandsCount: number;
 	isArmDetected: boolean;
-	isMoving: boolean;
 	isComposing: boolean;
 	activeSign: RecognizedSign | null;
 	lastConfirmedSign: RecognizedSign | null;
@@ -49,7 +53,6 @@ export interface UseSignCaptureReturn {
 const CONSECUTIVE_REQUIRED = 2;
 const NO_SIGN_STREAK_TO_RESET = 5;
 const UTTERANCE_PAUSE_MS = 3000;
-const MOTION_VELOCITY_THRESHOLD = 0.12;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
 
@@ -113,64 +116,15 @@ function updateCandidateStreak(
 	return { isConfirmed: false };
 }
 
-interface MotionTracker {
-	lastWristL?: { x: number; y: number };
-	lastWristR?: { x: number; y: number };
-	lastTime: number;
-	recentVelocities: number[];
-}
-
-function calculateInstantVelocity(
-	tracker: MotionTracker,
-	poseLandmarks: NormalizedLandmark[] | null,
-	now: number,
-): { velocity: number; isMoving: boolean } {
-	const dt = Math.max(0.016, (now - tracker.lastTime) / 1000);
-	tracker.lastTime = now;
-
-	let distL = 0;
-	let distR = 0;
-
-	if (poseLandmarks && poseLandmarks.length >= 17) {
-		const wristL = poseLandmarks[15];
-		const wristR = poseLandmarks[16];
-
-		if (wristL && tracker.lastWristL) {
-			const dx = wristL.x - tracker.lastWristL.x;
-			const dy = wristL.y - tracker.lastWristL.y;
-			distL = Math.sqrt(dx * dx + dy * dy);
-		}
-		if (wristR && tracker.lastWristR) {
-			const dx = wristR.x - tracker.lastWristR.x;
-			const dy = wristR.y - tracker.lastWristR.y;
-			distR = Math.sqrt(dx * dx + dy * dy);
-		}
-
-		if (wristL) tracker.lastWristL = { x: wristL.x, y: wristL.y };
-		if (wristR) tracker.lastWristR = { x: wristR.x, y: wristR.y };
-	}
-
-	const maxDist = Math.max(distL, distR);
-	const instantaneousV = maxDist / dt;
-
-	tracker.recentVelocities.push(instantaneousV);
-	if (tracker.recentVelocities.length > 6) {
-		tracker.recentVelocities.shift();
-	}
-
-	const avgV =
-		tracker.recentVelocities.reduce((a, b) => a + b, 0) / tracker.recentVelocities.length;
-	const isMoving = avgV > MOTION_VELOCITY_THRESHOLD;
-
-	return { velocity: avgV, isMoving };
-}
-
 /**
- * Captures webcam stream with Velocity Gating & Hybrid Recognition Engine:
- * 1. During motion (v > threshold): Mutes static rules to prevent transient false positives (e.g. number 4 during thank you),
- *    feeds 30-frame sequence to LSTM & DTW.
- * 2. During stillness / settled (v <= threshold): Evaluates static gestures & poses immediately with zero latency.
- * 3. Accumulates glosses and converts them to natural sentences via LLM translation.
+ * Captures webcam stream and recognizes signs purely from the 30-frame sequence window
+ * (LSTM for the trained 11 words, DTW for custom-recorded ones) -- sign language is
+ * distinguished by motion over time, not a single frame, so there is deliberately no
+ * single-frame/static-pose classifier here (an earlier version had one for zero-latency
+ * generic gestures like "thumbs up"/numbers; it was removed because judging any KSL sign
+ * from one still frame produced false positives, especially during the pause between
+ * words that the utterance-compose debounce relies on).
+ * Accumulates confirmed words and converts them to natural sentences via LLM translation.
  */
 export function useSignCapture(
 	room: Room | null = null,
@@ -179,15 +133,6 @@ export function useSignCapture(
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
-
-	const filterRef = useRef<SignStabilityFilter | null>(null);
-	if (!filterRef.current) {
-		filterRef.current = new SignStabilityFilter({
-			windowDurationMs: 250,
-			minConsensusRatio: 0.6,
-			emitCooldownMs: 1800,
-		});
-	}
 
 	// 30-Frame Rolling Window & LSTM State
 	const windowRef = useRef(new RollingWindow());
@@ -198,12 +143,6 @@ export function useSignCapture(
 		insertedForSegment: false,
 	});
 	const predictingRef = useRef(false);
-
-	// Velocity Motion Tracker
-	const motionTrackerRef = useRef<MotionTracker>({
-		lastTime: performance.now(),
-		recentVelocities: [],
-	});
 
 	// Word buffer & Utterance state for LLM translation
 	const wordBufferRef = useRef<string[]>([]);
@@ -219,7 +158,6 @@ export function useSignCapture(
 	const [showSkeleton, setShowSkeleton] = useState(true);
 	const [detectedHandsCount, setDetectedHandsCount] = useState(0);
 	const [isArmDetected, setIsArmDetected] = useState(false);
-	const [isMoving, setIsMoving] = useState(false);
 	const [isComposing, setIsComposing] = useState(false);
 	const [activeSign, setActiveSign] = useState<RecognizedSign | null>(null);
 	const [lastConfirmedSign, setLastConfirmedSign] = useState<RecognizedSign | null>(null);
@@ -416,7 +354,8 @@ export function useSignCapture(
 		[commitConfirmedSign],
 	);
 
-	// Main Frame processing callback with Velocity Gating
+	// Main frame processing callback: sequence-only recognition (LSTM + DTW), no
+	// single-frame static gesture path.
 	const handleLandmarkerResult = useCallback(
 		(handResult: HandLandmarkerResult) => {
 			const hands = handResult.landmarks ?? [];
@@ -431,39 +370,6 @@ export function useSignCapture(
 				showSkeleton,
 			);
 
-			const now = performance.now();
-
-			// 1. Calculate Kinematic Motion Velocity
-			const { isMoving: currentMoving } = calculateInstantVelocity(
-				motionTrackerRef.current,
-				poseLandmarks,
-				now,
-			);
-			setIsMoving(currentMoving);
-
-			// 2. Velocity-Gated Static Gesture & Arm Pose Recognition
-			// When moving: static rules are MUTED to eliminate transient noise (e.g. number 4 during thank you)
-			// When still/settled: static rules fire immediately for instant feedback
-			if (!currentMoving) {
-				const armCandidate = recognizeArmPoseSign(poseLandmarks, now);
-				const handCandidate = recognizeSignGesture(hands, now);
-				const staticCandidate = armCandidate ?? handCandidate;
-
-				const { activeSign: gestureActive, confirmedSign: gestureConfirmed } =
-					filterRef.current?.update(staticCandidate, now) ?? {
-						activeSign: null,
-						confirmedSign: null,
-					};
-
-				if (gestureActive) {
-					setActiveSign(gestureActive);
-				}
-				if (gestureConfirmed) {
-					commitConfirmedSign(gestureConfirmed);
-				}
-			}
-
-			// 3. Dynamic 30-Frame Sequence Recognition (LSTM + DTW)
 			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
 			windowRef.current.push(
 				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
@@ -478,7 +384,13 @@ export function useSignCapture(
 					const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
 					const dtwMatch = matchReference(frames);
 					const finalCandidate = lstmCandidate ?? dtwMatch?.word ?? null;
-					const finalConfidence = lstmCandidate ? confidence : dtwMatch ? 0.9 : 0;
+					// DTW has no natural 0-1 confidence -- derive one from how close the match
+					// distance is to the threshold, so a borderline match doesn't look as
+					// trustworthy in the UI as a near-exact one.
+					const dtwConfidence = dtwMatch
+						? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD)
+						: 0;
+					const finalConfidence = lstmCandidate ? confidence : dtwConfidence;
 
 					if (finalCandidate) {
 						handleKslPrediction(finalCandidate, finalConfidence);
@@ -491,7 +403,7 @@ export function useSignCapture(
 					predictingRef.current = false;
 				});
 		},
-		[showSkeleton, commitConfirmedSign, handleKslPrediction],
+		[showSkeleton, handleKslPrediction],
 	);
 
 	const { isLoading: isLoadingModel, isReady: isModelReady } = useHandLandmarker(
@@ -523,7 +435,6 @@ export function useSignCapture(
 		showSkeleton,
 		detectedHandsCount,
 		isArmDetected,
-		isMoving,
 		isComposing,
 		activeSign,
 		lastConfirmedSign,
