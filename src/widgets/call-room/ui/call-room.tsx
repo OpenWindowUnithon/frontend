@@ -13,6 +13,7 @@ import {
 	type CommunicationMode,
 	getCallPreferences,
 	sendChatText,
+	subscribeToChatText,
 } from "@/entities/call";
 import type { CaptionType } from "@/entities/caption";
 import { Caption } from "@/entities/caption";
@@ -41,7 +42,7 @@ type TextMessage = {
 };
 
 type TimelineItem =
-	| { kind: "caption"; at: number; caption: CaptionType }
+	| { kind: "caption"; at: number; align: "start" | "end"; caption: CaptionType }
 	| { kind: "message"; at: number; message: TextMessage };
 
 function formatDuration(seconds: number) {
@@ -49,30 +50,75 @@ function formatDuration(seconds: number) {
 }
 
 /**
- * Builds the merged, chronologically-sorted conversation from the shared caption stream and
- * this side's own composed messages -- shared by the text and sign call views so switching
- * between them mid-call doesn't reshuffle or reset message ordering (each view used to keep
- * its own `captionTimes` ref, so remounting one on a mode switch re-stamped every caption's
- * sort key to "now").
+ * Builds the merged, chronologically-sorted conversation from one or more caption streams
+ * (each tagged with which side of the bubble it renders on) plus this side's own composed
+ * messages -- shared by the text, sign, and hearing call views so switching between them
+ * mid-call doesn't reshuffle or reset message ordering (each view used to keep its own
+ * `captionTimes` ref, so remounting one on a mode switch re-stamped every caption's sort key
+ * to "now").
  */
 function useTimeline(
-	captions: CaptionType[],
+	captionGroups: ReadonlyArray<{ captions: CaptionType[]; align: "start" | "end" }>,
 	messages: TextMessage[],
 ): { timeline: TimelineItem[]; timelineVersion: string } {
 	const captionTimes = useRef(new Map<string, number>());
-	for (const caption of captions) {
-		if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
+	for (const group of captionGroups) {
+		for (const caption of group.captions) {
+			if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
+		}
 	}
 	const timeline: TimelineItem[] = [
-		...captions.map((caption) => ({
-			kind: "caption" as const,
-			at: captionTimes.current.get(caption.id) ?? 0,
-			caption,
-		})),
+		...captionGroups.flatMap((group) =>
+			group.captions.map((caption) => ({
+				kind: "caption" as const,
+				at: captionTimes.current.get(caption.id) ?? 0,
+				align: group.align,
+				caption,
+			})),
+		),
 		...messages.map((message) => ({ kind: "message" as const, at: message.id, message })),
 	].sort((left, right) => left.at - right.at);
-	const timelineVersion = `${timeline.length}:${captions.at(-1)?.text ?? ""}`;
+	const lastItem = timeline.at(-1);
+	const lastText = lastItem
+		? lastItem.kind === "caption"
+			? lastItem.caption.text
+			: lastItem.message.text
+		: "";
+	const timelineVersion = `${timeline.length}:${lastText}`;
 	return { timeline, timelineVersion };
+}
+
+/**
+ * Receives the DEAF participant's composed sentences over the same `lk.chat` topic the agent
+ * speaks aloud from -- lets the HEARING participant's screen show them as text too, not just
+ * as synthesized audio. Each arrival is one complete message (no interim/final split), so
+ * every receive appends a new final "caption" with a locally-generated id.
+ */
+function useIncomingChatCaptions(room: Room): CaptionType[] {
+	const [received, setReceived] = useState<CaptionType[]>([]);
+	const nextIdRef = useRef(0);
+
+	useEffect(() => {
+		return subscribeToChatText(room, (text) => {
+			nextIdRef.current += 1;
+			setReceived((prev) => [...prev, { id: `chat-${nextIdRef.current}`, text, final: true }]);
+		});
+	}, [room]);
+
+	return received;
+}
+
+/** Mutes/unmutes every `<audio>` element on the page -- there's only ever the one agent playback track during a call, so this is simpler than threading a ref through AgentAudioPlayer. Shared by the DEAF side's control bar and the HEARING side's speaker button so both stay in sync with the same toggle behavior. */
+function useSpeakerMute() {
+	const [muted, setMuted] = useState(false);
+	const toggle = () => {
+		setMuted((prev) => {
+			const next = !prev;
+			for (const audio of document.querySelectorAll("audio")) audio.muted = next;
+			return next;
+		});
+	};
+	return { muted, toggle };
 }
 
 function CallHeader({
@@ -105,7 +151,7 @@ function CallHeader({
 /** Header shared by both the text and sign call views, so switching between them never reflows it. */
 function DeafCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactName" | "seconds">) {
 	return (
-		<header className="px-6 pb-4 pt-7 text-center">
+		<header className="shrink-0 px-6 pb-4 pt-7 text-center">
 			<p className="text-sm font-medium tabular-nums text-muted-foreground">
 				<span className="sr-only">통화 시간 </span>
 				{formatDuration(seconds)}
@@ -150,7 +196,7 @@ function TextCall({
 				)}
 				{timeline.map((item) =>
 					item.kind === "caption" ? (
-						<Caption caption={item.caption} key={`caption-${item.caption.id}`} />
+						<Caption caption={item.caption} align={item.align} key={`caption-${item.caption.id}`} />
 					) : (
 						<div className="flex justify-end" key={`message-${item.message.id}`}>
 							<div
@@ -262,18 +308,13 @@ function CallControlsBar({
 	onEnd: () => void;
 	ending: boolean;
 }) {
-	const [speakerOff, setSpeakerOff] = useState(false);
-	const toggleSpeaker = () => {
-		const next = !speakerOff;
-		setSpeakerOff(next);
-		for (const audio of document.querySelectorAll("audio")) audio.muted = next;
-	};
+	const { muted: speakerMuted, toggle: toggleSpeaker } = useSpeakerMute();
 	const controls = [
 		{
-			label: speakerOff ? "스피커 꺼짐" : "스피커 켜짐",
-			icon: speakerOff ? IconSpeakerWave2SlashFill : IconSpeakerWave2Fill,
+			label: speakerMuted ? "스피커 꺼짐" : "스피커 켜짐",
+			icon: speakerMuted ? IconSpeakerWave2SlashFill : IconSpeakerWave2Fill,
 			onClick: toggleSpeaker,
-			active: !speakerOff,
+			active: !speakerMuted,
 		},
 		{
 			label: ending ? "종료 중" : "종료",
@@ -341,12 +382,19 @@ function EndedCall({ contactName, seconds }: Omit<CallRoomProps, "room" | "mode"
 	);
 }
 
-function SignChat({
+/**
+ * Read-only conversation log shared by the sign-mode DEAF view and the HEARING view -- both
+ * just watch a merged timeline (no compose form of their own here: the DEAF signer composes
+ * via the embedded camera, the HEARING participant via their voice).
+ */
+function ConversationLog({
 	timeline,
 	timelineVersion,
+	placeholder,
 }: {
 	timeline: TimelineItem[];
 	timelineVersion: string;
+	placeholder: string;
 }) {
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
@@ -364,12 +412,10 @@ function SignChat({
 			aria-live="polite"
 			role="log"
 		>
-			{timeline.length === 0 && (
-				<p className="text-muted-foreground">수어로 말하면 이곳에 실시간으로 표시돼요.</p>
-			)}
+			{timeline.length === 0 && <p className="text-muted-foreground">{placeholder}</p>}
 			{timeline.map((item) =>
 				item.kind === "caption" ? (
-					<Caption caption={item.caption} key={`caption-${item.caption.id}`} />
+					<Caption caption={item.caption} align={item.align} key={`caption-${item.caption.id}`} />
 				) : (
 					<div className="flex justify-end" key={`message-${item.message.id}`}>
 						<div className="w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground">
@@ -385,10 +431,50 @@ function SignChat({
 	);
 }
 
-function HearingRoom({ room }: { room: Room }) {
+/** Mutes/unmutes incoming agent audio -- a separate concern from the mic (outgoing), styled to match MicToggleButton since the two sit side by side. */
+function SpeakerToggleButton() {
+	const { muted, toggle } = useSpeakerMute();
 	return (
-		<div className="flex flex-1 flex-col items-center justify-center gap-6 px-5 py-8">
-			<MicToggleButton room={room} />
+		<button
+			type="button"
+			onClick={toggle}
+			aria-pressed={!muted}
+			className="flex min-h-28 flex-col items-center justify-center gap-2 rounded-3xl bg-muted text-sm font-semibold focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring"
+		>
+			<span
+				className={`grid size-14 place-items-center rounded-full ${!muted ? "bg-foreground text-background" : "bg-card"}`}
+			>
+				{muted ? (
+					<IconSpeakerWave2SlashFill className="size-7" aria-hidden />
+				) : (
+					<IconSpeakerWave2Fill className="size-7" aria-hidden />
+				)}
+			</span>
+			{muted ? "스피커 꺼짐" : "스피커 켜짐"}
+		</button>
+	);
+}
+
+function HearingRoom({
+	room,
+	timeline,
+	timelineVersion,
+}: {
+	room: Room;
+	timeline: TimelineItem[];
+	timelineVersion: string;
+}) {
+	return (
+		<div className="flex min-h-0 flex-1 flex-col">
+			<ConversationLog
+				timeline={timeline}
+				timelineVersion={timelineVersion}
+				placeholder="상대방이 말하면 이곳에 실시간으로 표시돼요."
+			/>
+			<div className="grid shrink-0 grid-cols-2 gap-3 px-5 py-8">
+				<MicToggleButton room={room} />
+				<SpeakerToggleButton />
+			</div>
 			<AgentAudioPlayer room={room} />
 		</div>
 	);
@@ -401,7 +487,15 @@ export function CallRoom(props: CallRoomProps) {
 	const [textDraft, setTextDraft] = useState("");
 	const [messages, setMessages] = useState<TextMessage[]>([]);
 	const captions = useReceiveCaptions(props.room);
-	const { timeline, timelineVersion } = useTimeline(captions, messages);
+	const incomingChat = useIncomingChatCaptions(props.room);
+	const captionGroups =
+		props.mode === "HEARING"
+			? [
+					{ captions, align: "end" as const },
+					{ captions: incomingChat, align: "start" as const },
+				]
+			: [{ captions, align: "start" as const }];
+	const { timeline, timelineVersion } = useTimeline(captionGroups, messages);
 	const endCall = async () => {
 		setEnding(true);
 		try {
@@ -440,8 +534,8 @@ export function CallRoom(props: CallRoomProps) {
 	if (ended || props.endedExternally) return <EndedCall {...props} communication={communication} />;
 	if (props.mode === "HEARING") {
 		return (
-			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
-				<section className="mx-4 mt-4 rounded-3xl bg-muted" aria-label="통화 정보와 제어">
+			<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card">
+				<section className="mx-4 mt-4 shrink-0 rounded-3xl bg-muted" aria-label="통화 정보와 제어">
 					<CallHeader
 						contactName={props.contactName}
 						seconds={props.seconds}
@@ -449,13 +543,13 @@ export function CallRoom(props: CallRoomProps) {
 						ending={ending}
 					/>
 				</section>
-				<HearingRoom room={props.room} />
+				<HearingRoom room={props.room} timeline={timeline} timelineVersion={timelineVersion} />
 			</main>
 		);
 	}
 
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
+		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card">
 			<DeafCallHeader contactName={props.contactName} seconds={props.seconds} />
 			{communication === "TEXT" ? (
 				<TextCall
@@ -467,7 +561,11 @@ export function CallRoom(props: CallRoomProps) {
 				/>
 			) : (
 				<div className="relative flex min-h-0 flex-1 flex-col">
-					<SignChat timeline={timeline} timelineVersion={timelineVersion} />
+					<ConversationLog
+						timeline={timeline}
+						timelineVersion={timelineVersion}
+						placeholder="수어로 말하면 이곳에 실시간으로 표시돼요."
+					/>
 					<div
 						className="absolute right-4 top-3 aspect-3/4 w-24 overflow-hidden rounded-2xl border border-border shadow-lg sm:w-28"
 						aria-hidden
