@@ -1,5 +1,4 @@
 import {
-	IconGridDot5Fill,
 	IconPaperplaneFill,
 	IconPhoneXmarkFill,
 	IconSpeakerWave2Fill,
@@ -8,23 +7,17 @@ import {
 import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import type { Room } from "livekit-client";
-import {
-	type Dispatch,
-	type ReactNode,
-	type SetStateAction,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import {
 	type CallMode,
 	type CommunicationMode,
 	getCallPreferences,
 	sendChatText,
 } from "@/entities/call";
+import type { CaptionType } from "@/entities/caption";
 import { Caption } from "@/entities/caption";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
-import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
+import { useReceiveCaptions } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
 import { MicToggleButton } from "@/features/toggle-mic";
 import { snackbar } from "@/shared/lib";
@@ -47,8 +40,39 @@ type TextMessage = {
 	state: "sending" | "sent" | "failed";
 };
 
+type TimelineItem =
+	| { kind: "caption"; at: number; caption: CaptionType }
+	| { kind: "message"; at: number; message: TextMessage };
+
 function formatDuration(seconds: number) {
 	return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Builds the merged, chronologically-sorted conversation from the shared caption stream and
+ * this side's own composed messages -- shared by the text and sign call views so switching
+ * between them mid-call doesn't reshuffle or reset message ordering (each view used to keep
+ * its own `captionTimes` ref, so remounting one on a mode switch re-stamped every caption's
+ * sort key to "now").
+ */
+function useTimeline(
+	captions: CaptionType[],
+	messages: TextMessage[],
+): { timeline: TimelineItem[]; timelineVersion: string } {
+	const captionTimes = useRef(new Map<string, number>());
+	for (const caption of captions) {
+		if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
+	}
+	const timeline: TimelineItem[] = [
+		...captions.map((caption) => ({
+			kind: "caption" as const,
+			at: captionTimes.current.get(caption.id) ?? 0,
+			caption,
+		})),
+		...messages.map((message) => ({ kind: "message" as const, at: message.id, message })),
+	].sort((left, right) => left.at - right.at);
+	const timelineVersion = `${timeline.length}:${captions.at(-1)?.text ?? ""}`;
+	return { timeline, timelineVersion };
 }
 
 function CallHeader({
@@ -78,7 +102,8 @@ function CallHeader({
 	);
 }
 
-function TextCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactName" | "seconds">) {
+/** Header shared by both the text and sign call views, so switching between them never reflows it. */
+function DeafCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactName" | "seconds">) {
 	return (
 		<header className="px-6 pb-4 pt-7 text-center">
 			<p className="text-sm font-medium tabular-nums text-muted-foreground">
@@ -91,67 +116,26 @@ function TextCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactNa
 }
 
 function TextCall({
-	room,
-	captions,
-	renderControls,
+	timeline,
+	timelineVersion,
 	draft,
 	setDraft,
-	messages,
-	setMessages,
+	onDeliver,
 }: {
-	room: Room;
-	captions: ReturnType<typeof useReceiveCaptions>;
-	renderControls: (focusInput: () => void) => ReactNode;
+	timeline: TimelineItem[];
+	timelineVersion: string;
 	draft: string;
 	setDraft: Dispatch<SetStateAction<string>>;
-	messages: TextMessage[];
-	setMessages: Dispatch<SetStateAction<TextMessage[]>>;
+	onDeliver: (text: string, existingId?: number) => void;
 }) {
-	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
-	const captionTimes = useRef(new Map<string, number>());
-	for (const caption of captions) {
-		if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
-	}
-	const timeline = [
-		...captions.map((caption) => ({
-			kind: "caption" as const,
-			at: captionTimes.current.get(caption.id) ?? 0,
-			caption,
-		})),
-		...messages.map((message) => ({ kind: "message" as const, at: message.id, message })),
-	].sort((left, right) => left.at - right.at);
-	const timelineVersion = `${timeline.length}:${captions.at(-1)?.text ?? ""}`;
 
 	useEffect(() => {
 		if (timelineVersion && autoScroll.current) {
 			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 		}
 	}, [timelineVersion]);
-
-	const deliver = async (text: string, existingId?: number) => {
-		const clean = text.trim();
-		if (!clean) return;
-		const id = existingId ?? Date.now();
-		setMessages((items) =>
-			existingId
-				? items.map((item) => (item.id === id ? { ...item, state: "sending" } : item))
-				: [...items, { id, text: clean, state: "sending" }],
-		);
-		if (!existingId) setDraft("");
-		try {
-			await sendChatText(room, clean);
-			setMessages((items) =>
-				items.map((item) => (item.id === id ? { ...item, state: "sent" } : item)),
-			);
-		} catch {
-			setMessages((items) =>
-				items.map((item) => (item.id === id ? { ...item, state: "failed" } : item)),
-			);
-			snackbar.error("메시지를 전달하지 못했어요.");
-		}
-	};
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -181,7 +165,7 @@ function TextCall({
 											variant="neutralOutline"
 											size="large"
 											className="h-11 w-full border-background/60 text-background hover:text-foreground"
-											onClick={() => deliver(item.message.text, item.message.id)}
+											onClick={() => onDeliver(item.message.text, item.message.id)}
 										>
 											다시 전달
 										</ActionButton>
@@ -193,49 +177,90 @@ function TextCall({
 				)}
 				<div ref={bottomRef} />
 			</div>
-			<div className="sticky bottom-0 bg-card pt-2">
-				<div className="px-5 pb-3">{renderControls(() => inputRef.current?.focus())}</div>
-				<form
-					className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
-					onSubmit={(event) => {
-						event.preventDefault();
-						void deliver(draft);
-					}}
-				>
-					<div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
-						<TextField value={draft} onValueChange={({ value }) => setDraft(value)} size="large">
-							<TextFieldTextarea
-								ref={inputRef}
-								aria-label="상대방에게 전달할 내용"
-								placeholder="메시지 입력"
-								style={{ minHeight: 56, maxHeight: 120 }}
-							/>
-						</TextField>
-						<ActionButton
-							variant="neutralSolid"
-							size="large"
-							className="h-14 shrink-0 rounded-full px-4"
-							disabled={!draft.trim()}
-							type="submit"
-							aria-label="AI 음성으로 전달"
-						>
-							<PrefixIcon svg={<IconPaperplaneFill />} /> 전달
-						</ActionButton>
-					</div>
-				</form>
-			</div>
+			<form
+				className="shrink-0 px-4 pb-3 pt-2"
+				onSubmit={(event) => {
+					event.preventDefault();
+					onDeliver(draft);
+				}}
+			>
+				<div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+					<TextField value={draft} onValueChange={({ value }) => setDraft(value)} size="large">
+						<TextFieldTextarea
+							aria-label="상대방에게 전달할 내용"
+							placeholder="메시지 입력"
+							style={{ minHeight: 56, maxHeight: 120 }}
+						/>
+					</TextField>
+					<ActionButton
+						variant="neutralSolid"
+						size="large"
+						className="h-14 shrink-0 rounded-full px-4"
+						disabled={!draft.trim()}
+						type="submit"
+						aria-label="AI 음성으로 전달"
+					>
+						<PrefixIcon svg={<IconPaperplaneFill />} /> 전달
+					</ActionButton>
+				</div>
+			</form>
 		</div>
 	);
 }
 
-function TextCallControls({
+/** Segmented text/sign toggle -- lets the DEAF side switch its input method mid-call. */
+function CommunicationSwitcher({
+	communication,
+	onChange,
+}: {
+	communication: CommunicationMode;
+	onChange: (mode: CommunicationMode) => void;
+}) {
+	const options: ReadonlyArray<{ value: CommunicationMode; label: string }> = [
+		{ value: "TEXT", label: "텍스트" },
+		{ value: "SIGN", label: "수어" },
+	];
+	return (
+		<div
+			role="tablist"
+			aria-label="입력 방식 전환"
+			className="inline-flex rounded-full bg-muted p-1"
+		>
+			{options.map((option) => (
+				<button
+					key={option.value}
+					type="button"
+					role="tab"
+					aria-selected={communication === option.value}
+					onClick={() => onChange(option.value)}
+					className={`min-w-20 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+						communication === option.value
+							? "bg-card text-foreground shadow-sm"
+							: "text-muted-foreground"
+					}`}
+				>
+					{option.label}
+				</button>
+			))}
+		</div>
+	);
+}
+
+/**
+ * Bottom control bar for DEAF-mode calls -- identical markup regardless of whether the call is
+ * currently in TEXT or SIGN mode, so switching between them (via the switcher it hosts) never
+ * shifts or resizes this bar.
+ */
+function CallControlsBar({
+	communication,
+	onCommunicationChange,
 	onEnd,
 	ending,
-	onFocusInput,
 }: {
+	communication: CommunicationMode;
+	onCommunicationChange: (mode: CommunicationMode) => void;
 	onEnd: () => void;
 	ending: boolean;
-	onFocusInput: () => void;
 }) {
 	const [speakerOff, setSpeakerOff] = useState(false);
 	const toggleSpeaker = () => {
@@ -258,38 +283,37 @@ function TextCallControls({
 			destructive: true,
 			disabled: ending,
 		},
-		{
-			label: "입력",
-			icon: IconGridDot5Fill,
-			onClick: onFocusInput,
-			active: false,
-		},
 	];
 
 	return (
-		<fieldset className="grid grid-cols-3 gap-2" aria-label="통화 제어">
-			<legend className="sr-only">통화 제어</legend>
-			{controls.map((control) => {
-				const Icon = control.icon;
-				return (
-					<button
-						key={control.label}
-						type="button"
-						onClick={control.onClick}
-						disabled={control.disabled}
-						aria-pressed={control.active}
-						className="flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl text-xs font-semibold focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
-					>
-						<span
-							className={`grid size-13 place-items-center rounded-full ${control.destructive ? "bg-destructive text-white" : control.active ? "bg-foreground text-background" : "bg-muted text-foreground"}`}
+		<div className="shrink-0 border-t border-border bg-card px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+			<div className="mb-3 flex justify-center">
+				<CommunicationSwitcher communication={communication} onChange={onCommunicationChange} />
+			</div>
+			<fieldset className="grid grid-cols-2 gap-2" aria-label="통화 제어">
+				<legend className="sr-only">통화 제어</legend>
+				{controls.map((control) => {
+					const Icon = control.icon;
+					return (
+						<button
+							key={control.label}
+							type="button"
+							onClick={control.onClick}
+							disabled={control.disabled}
+							aria-pressed={control.active}
+							className="flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl text-xs font-semibold focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60"
 						>
-							<Icon className="size-6" aria-hidden />
-						</span>
-						{control.label}
-					</button>
-				);
-			})}
-		</fieldset>
+							<span
+								className={`grid size-13 place-items-center rounded-full ${control.destructive ? "bg-destructive text-white" : control.active ? "bg-foreground text-background" : "bg-muted text-foreground"}`}
+							>
+								<Icon className="size-6" aria-hidden />
+							</span>
+							{control.label}
+						</button>
+					);
+				})}
+			</fieldset>
+		</div>
 	);
 }
 
@@ -317,6 +341,50 @@ function EndedCall({ contactName, seconds }: Omit<CallRoomProps, "room" | "mode"
 	);
 }
 
+function SignChat({
+	timeline,
+	timelineVersion,
+}: {
+	timeline: TimelineItem[];
+	timelineVersion: string;
+}) {
+	const bottomRef = useRef<HTMLDivElement>(null);
+	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
+
+	useEffect(() => {
+		if (timelineVersion && autoScroll.current) {
+			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+		}
+	}, [timelineVersion]);
+
+	return (
+		<div
+			className="min-h-40 flex-1 space-y-3 overflow-y-auto px-5 pb-4 pt-4"
+			aria-label="통화 대화"
+			aria-live="polite"
+			role="log"
+		>
+			{timeline.length === 0 && (
+				<p className="text-muted-foreground">수어로 말하면 이곳에 실시간으로 표시돼요.</p>
+			)}
+			{timeline.map((item) =>
+				item.kind === "caption" ? (
+					<Caption caption={item.caption} key={`caption-${item.caption.id}`} />
+				) : (
+					<div className="flex justify-end" key={`message-${item.message.id}`}>
+						<div className="w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground">
+							<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
+								{item.message.text}
+							</p>
+						</div>
+					</div>
+				),
+			)}
+			<div ref={bottomRef} />
+		</div>
+	);
+}
+
 function HearingRoom({ room }: { room: Room }) {
 	return (
 		<div className="flex flex-1 flex-col items-center justify-center gap-6 px-5 py-8">
@@ -329,10 +397,11 @@ function HearingRoom({ room }: { room: Room }) {
 export function CallRoom(props: CallRoomProps) {
 	const [ended, setEnded] = useState(false);
 	const [ending, setEnding] = useState(false);
-	const communication = props.communication;
+	const [communication, setCommunication] = useState<CommunicationMode>(props.communication);
 	const [textDraft, setTextDraft] = useState("");
-	const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
+	const [messages, setMessages] = useState<TextMessage[]>([]);
 	const captions = useReceiveCaptions(props.room);
+	const { timeline, timelineVersion } = useTimeline(captions, messages);
 	const endCall = async () => {
 		setEnding(true);
 		try {
@@ -344,6 +413,30 @@ export function CallRoom(props: CallRoomProps) {
 			setEnding(false);
 		}
 	};
+
+	const deliver = async (text: string, existingId?: number) => {
+		const clean = text.trim();
+		if (!clean) return;
+		const id = existingId ?? Date.now();
+		setMessages((items) =>
+			existingId
+				? items.map((item) => (item.id === id ? { ...item, state: "sending" } : item))
+				: [...items, { id, text: clean, state: "sending" }],
+		);
+		if (!existingId) setTextDraft("");
+		try {
+			await sendChatText(props.room, clean);
+			setMessages((items) =>
+				items.map((item) => (item.id === id ? { ...item, state: "sent" } : item)),
+			);
+		} catch {
+			setMessages((items) =>
+				items.map((item) => (item.id === id ? { ...item, state: "failed" } : item)),
+			);
+			snackbar.error("메시지를 전달하지 못했어요.");
+		}
+	};
+
 	if (ended || props.endedExternally) return <EndedCall {...props} communication={communication} />;
 	if (props.mode === "HEARING") {
 		return (
@@ -363,44 +456,39 @@ export function CallRoom(props: CallRoomProps) {
 
 	return (
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
-			{communication === "TEXT" ? (
-				<section aria-label="통화 정보">
-					<TextCallHeader contactName={props.contactName} seconds={props.seconds} />
-				</section>
-			) : (
-				<section className="mx-4 mt-4 rounded-3xl bg-muted" aria-label="통화 정보와 제어">
-					<CallHeader
-						contactName={props.contactName}
-						seconds={props.seconds}
-						onEnd={() => void endCall()}
-						ending={ending}
-					/>
-				</section>
-			)}
+			<DeafCallHeader contactName={props.contactName} seconds={props.seconds} />
 			{communication === "TEXT" ? (
 				<TextCall
-					room={props.room}
-					captions={captions}
+					timeline={timeline}
+					timelineVersion={timelineVersion}
 					draft={textDraft}
 					setDraft={setTextDraft}
-					messages={textMessages}
-					setMessages={setTextMessages}
-					renderControls={(focusInput) => (
-						<TextCallControls
-							onEnd={() => void endCall()}
-							ending={ending}
-							onFocusInput={focusInput}
-						/>
-					)}
+					onDeliver={(text, existingId) => void deliver(text, existingId)}
 				/>
 			) : (
-				<div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
-					<section className="rounded-2xl bg-muted px-4 py-3" aria-label="상대방 음성 자막">
-						<CaptionList captions={captions} />
-					</section>
-					<SignCaptureView room={props.room} captions={captions} />
+				<div className="relative flex min-h-0 flex-1 flex-col">
+					<SignChat timeline={timeline} timelineVersion={timelineVersion} />
+					<div
+						className="absolute right-4 top-3 aspect-3/4 w-24 overflow-hidden rounded-2xl border border-border shadow-lg sm:w-28"
+						aria-hidden
+					>
+						<SignCaptureView
+							room={props.room}
+							captions={captions}
+							pip
+							onSentence={(text) => {
+								setMessages((items) => [...items, { id: Date.now(), text, state: "sent" }]);
+							}}
+						/>
+					</div>
 				</div>
 			)}
+			<CallControlsBar
+				communication={communication}
+				onCommunicationChange={setCommunication}
+				onEnd={() => void endCall()}
+				ending={ending}
+			/>
 		</main>
 	);
 }
