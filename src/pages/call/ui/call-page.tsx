@@ -1,4 +1,3 @@
-import { IconPhoneXmarkFill } from "@karrotmarket/react-monochrome-icon";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { JoinCall, useJoinCall } from "@/features/join-call";
@@ -15,9 +14,20 @@ export function CallPage() {
 	const { mode, room: roomCode, communication, contactName, phone } = useSearch({ from: "/call" });
 	const normalizedRoomCode = normalizeRoomCode(roomCode);
 	const navigate = useNavigate();
-	const { room, status, join, leave } = useJoinCall();
+	const {
+		room,
+		status,
+		role,
+		join,
+		accept,
+		reject,
+		leave,
+		accepting,
+		rejecting,
+		actionError,
+		rejectedBySelf,
+	} = useJoinCall();
 	const [seconds, setSeconds] = useState(0);
-	const [cancelling, setCancelling] = useState(false);
 
 	useEffect(() => {
 		join(normalizedRoomCode, mode, mode === "DEAF");
@@ -32,28 +42,26 @@ export function CallPage() {
 	if ((status !== "connected" && status !== "ended") || !room) {
 		return (
 			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card pb-[max(1.75rem,env(safe-area-inset-bottom))]">
-				<JoinCall status={status} contactName={contactName} phone={phone} />
-				<button
-					type="button"
-					disabled={cancelling}
-					className="mx-auto flex min-h-28 min-w-28 flex-col items-center justify-center gap-3 rounded-3xl text-sm font-bold text-destructive focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ring"
-					onClick={async () => {
-						setCancelling(true);
+				<JoinCall
+					status={status}
+					role={role}
+					contactName={contactName}
+					phone={phone}
+					onAccept={accept}
+					onReject={reject}
+					onCancel={async () => {
 						try {
 							await leave();
 							navigate({ to: "/" });
 						} catch (error) {
 							console.error("[call-page] cancel failed", error);
-						} finally {
-							setCancelling(false);
 						}
 					}}
-				>
-					<span className="grid size-17 place-items-center rounded-full bg-destructive text-white shadow-sm">
-						<IconPhoneXmarkFill className="size-8" aria-hidden />
-					</span>
-					{cancelling ? "취소 중…" : "전화 취소"}
-				</button>
+					accepting={accepting}
+					rejecting={rejecting}
+					actionError={actionError}
+					rejectedBySelf={rejectedBySelf}
+				/>
 			</main>
 		);
 	}

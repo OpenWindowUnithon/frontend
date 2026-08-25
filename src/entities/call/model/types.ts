@@ -7,6 +7,12 @@ export type CallMode = z.infer<typeof callModeSchema>;
 export const communicationModeSchema = z.enum(["TEXT", "SIGN"]);
 export type CommunicationMode = z.infer<typeof communicationModeSchema>;
 
+export const callStatusSchema = z.enum(["CREATED", "RINGING", "ACTIVE", "REJECTED", "ENDED"]);
+export type CallStatus = z.infer<typeof callStatusSchema>;
+
+export const callRoleSchema = z.enum(["CALLER", "CALLEE"]);
+export type CallRole = z.infer<typeof callRoleSchema>;
+
 export const callParamsSchema = z.object({
 	room: z.string().min(1),
 	mode: callModeSchema,
@@ -18,9 +24,19 @@ export type CallParams = z.infer<typeof callParamsSchema>;
 
 export const joinResultSchema = z.object({
 	callId: z.string(),
-	livekitUrl: z.string(),
+	roomCode: z.string(),
 	identity: z.string(),
 	mode: callModeSchema,
-	token: z.string(),
+	status: callStatusSchema,
+	role: callRoleSchema,
 });
 export type JoinResult = z.infer<typeof joinResultSchema>;
+
+export const statusResultSchema = z.object({
+	status: callStatusSchema,
+	livekitUrl: z.string().nullish(),
+	token: z.string().nullish(),
+	identity: z.string().nullish(),
+	mode: callModeSchema.nullish(),
+});
+export type StatusResult = z.infer<typeof statusResultSchema>;

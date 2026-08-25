@@ -1,10 +1,14 @@
-import type { HandLandmarkerResult, PoseLandmarkerResult } from "@mediapipe/tasks-vision";
-import { debounce } from "es-toolkit";
+import type {
+	HandLandmarkerResult,
+	NormalizedLandmark,
+	PoseLandmarkerResult,
+} from "@mediapipe/tasks-vision";
 import type { Room } from "livekit-client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
-import { useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
+import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
 import { composeSignSentence } from "../api/sign-api";
+import { recognizeArmPoseSign } from "./arm-pose-recognizer";
 import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
 	extractFeatures,
@@ -12,140 +16,492 @@ import {
 	RollingWindow,
 	splitHandsByHandedness,
 } from "./landmarks";
-import { CONFIDENCE_THRESHOLD, predictSign } from "./sign-model";
+import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
+import { type RecognizedSign, recognizeSignGesture, SignStabilityFilter } from "./sign-recognizer";
 
-const CONSECUTIVE_REQUIRED = 3;
+export interface UseSignCaptureReturn {
+	videoRef: RefObject<HTMLVideoElement | null>;
+	canvasRef: RefObject<HTMLCanvasElement | null>;
+	isCameraActive: boolean;
+	cameraError: boolean;
+	isLoadingModel: boolean;
+	isModelReady: boolean;
+	showSkeleton: boolean;
+	detectedHandsCount: number;
+	isArmDetected: boolean;
+	isMoving: boolean;
+	isComposing: boolean;
+	activeSign: RecognizedSign | null;
+	lastConfirmedSign: RecognizedSign | null;
+	recentSigns: RecognizedSign[];
+	recognizedText: string | null;
+	wordBuffer: string[];
+	composedSentence: string | null;
+	references: Record<string, number>;
+	toggleCamera: () => void;
+	toggleSkeleton: () => void;
+	clearHistory: () => void;
+	recordReference: (word: string) => boolean;
+	removeReference: (word: string) => void;
+}
+
+const CONSECUTIVE_REQUIRED = 2;
 const NO_SIGN_STREAK_TO_RESET = 5;
-// How long to wait after the last recognized word before treating the
-// buffered words as one finished utterance and asking the LLM to compose it.
-const UTTERANCE_IDLE_MS = 1800;
+const UTTERANCE_PAUSE_MS = 1400;
+const MOTION_VELOCITY_THRESHOLD = 0.12;
 
-/** Captures the local camera, runs Hand+Pose Landmarker on it, and sends recognized text as chat. */
-export function useSignCapture(room: Room | null) {
-	const videoRef = useRef<HTMLVideoElement>(null);
-	const [recognizedText, setRecognizedText] = useState<string | null>(null);
-	const [cameraError, setCameraError] = useState(false);
-	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
+function renderLandmarksToCanvas(
+	canvas: HTMLCanvasElement | null,
+	video: HTMLVideoElement | null,
+	hands: NormalizedLandmark[][],
+	poseLandmarks: NormalizedLandmark[] | null,
+	showSkeleton: boolean,
+) {
+	if (!canvas || !showSkeleton) return;
 
+	if (video?.videoWidth && video.videoHeight) {
+		if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+			canvas.width = video.videoWidth;
+			canvas.height = video.videoHeight;
+		}
+	}
+
+	const ctx = canvas.getContext("2d");
+	if (!ctx) return;
+
+	drawFullBodySkeleton(ctx, hands, poseLandmarks, canvas.width, canvas.height, {
+		isMirrored: true,
+		connectorColor: "rgba(59, 130, 246, 0.85)",
+		jointColor: "rgba(255, 255, 255, 0.95)",
+		fingertipColor: "rgba(239, 68, 68, 0.95)",
+		armConnectorColor: "rgba(16, 185, 129, 0.85)",
+		armJointColor: "rgba(52, 211, 153, 1)",
+		lineWidth: 3,
+		nodeRadius: 4,
+	});
+}
+
+interface PredictionState {
+	lastCandidate: string | null;
+	candidateStreak: number;
+	insertedForSegment: boolean;
+}
+
+function updateCandidateStreak(
+	state: PredictionState,
+	candidate: string | null,
+): { isConfirmed: boolean } {
+	if (candidate === state.lastCandidate) {
+		state.candidateStreak += 1;
+	} else {
+		state.lastCandidate = candidate;
+		state.candidateStreak = 1;
+	}
+
+	if (candidate === null && state.candidateStreak >= NO_SIGN_STREAK_TO_RESET) {
+		state.insertedForSegment = false;
+	}
+
+	if (candidate && state.candidateStreak >= CONSECUTIVE_REQUIRED && !state.insertedForSegment) {
+		state.insertedForSegment = true;
+		return { isConfirmed: true };
+	}
+
+	return { isConfirmed: false };
+}
+
+interface MotionTracker {
+	lastWristL?: { x: number; y: number };
+	lastWristR?: { x: number; y: number };
+	lastTime: number;
+	recentVelocities: number[];
+}
+
+function calculateInstantVelocity(
+	tracker: MotionTracker,
+	poseLandmarks: NormalizedLandmark[] | null,
+	now: number,
+): { velocity: number; isMoving: boolean } {
+	const dt = Math.max(0.016, (now - tracker.lastTime) / 1000);
+	tracker.lastTime = now;
+
+	let distL = 0;
+	let distR = 0;
+
+	if (poseLandmarks && poseLandmarks.length >= 17) {
+		const wristL = poseLandmarks[15];
+		const wristR = poseLandmarks[16];
+
+		if (wristL && tracker.lastWristL) {
+			const dx = wristL.x - tracker.lastWristL.x;
+			const dy = wristL.y - tracker.lastWristL.y;
+			distL = Math.sqrt(dx * dx + dy * dy);
+		}
+		if (wristR && tracker.lastWristR) {
+			const dx = wristR.x - tracker.lastWristR.x;
+			const dy = wristR.y - tracker.lastWristR.y;
+			distR = Math.sqrt(dx * dx + dy * dy);
+		}
+
+		if (wristL) tracker.lastWristL = { x: wristL.x, y: wristL.y };
+		if (wristR) tracker.lastWristR = { x: wristR.x, y: wristR.y };
+	}
+
+	const maxDist = Math.max(distL, distR);
+	const instantaneousV = maxDist / dt;
+
+	tracker.recentVelocities.push(instantaneousV);
+	if (tracker.recentVelocities.length > 6) {
+		tracker.recentVelocities.shift();
+	}
+
+	const avgV =
+		tracker.recentVelocities.reduce((a, b) => a + b, 0) / tracker.recentVelocities.length;
+	const isMoving = avgV > MOTION_VELOCITY_THRESHOLD;
+
+	return { velocity: avgV, isMoving };
+}
+
+/**
+ * Captures webcam stream with Velocity Gating & Hybrid Recognition Engine:
+ * 1. During motion (v > threshold): Mutes static rules to prevent transient false positives (e.g. number 4 during thank you),
+ *    feeds 30-frame sequence to LSTM & DTW.
+ * 2. During stillness / settled (v <= threshold): Evaluates static gestures & poses immediately with zero latency.
+ * 3. Accumulates glosses and converts them to natural sentences via LLM translation.
+ */
+export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
+	const videoRef = useRef<HTMLVideoElement | null>(null);
+	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const streamRef = useRef<MediaStream | null>(null);
+
+	const filterRef = useRef<SignStabilityFilter | null>(null);
+	if (!filterRef.current) {
+		filterRef.current = new SignStabilityFilter({
+			windowDurationMs: 250,
+			minConsensusRatio: 0.6,
+			emitCooldownMs: 1800,
+		});
+	}
+
+	// 30-Frame Rolling Window & LSTM State
 	const windowRef = useRef(new RollingWindow());
 	const latestPoseRef = useRef<PoseLandmarkerResult | null>(null);
-	const lastCandidateRef = useRef<string | null>(null);
-	const candidateStreakRef = useRef(0);
-	const insertedForSegmentRef = useRef(false);
+	const predictionStateRef = useRef<PredictionState>({
+		lastCandidate: null,
+		candidateStreak: 0,
+		insertedForSegment: false,
+	});
 	const predictingRef = useRef(false);
-	const roomRef = useRef(room);
-	roomRef.current = room;
+
+	// Velocity Motion Tracker
+	const motionTrackerRef = useRef<MotionTracker>({
+		lastTime: performance.now(),
+		recentVelocities: [],
+	});
+
+	// Word buffer & Utterance state for LLM translation
 	const wordBufferRef = useRef<string[]>([]);
+	const utteranceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// Fires once the signer pauses for UTTERANCE_IDLE_MS: sends the buffered
-	// gloss words to the backend LLM and speaks/sends whatever sentence comes
-	// back (or the raw words, if the compose call itself fails).
-	const flushUtterance = useMemo(
-		() =>
-			debounce(() => {
-				const words = wordBufferRef.current;
-				wordBufferRef.current = [];
-				const currentRoom = roomRef.current;
-				if (words.length === 0 || !currentRoom) return;
+	const [isCameraActive, setIsCameraActive] = useState(true);
+	const [cameraError, setCameraError] = useState(false);
+	const [showSkeleton, setShowSkeleton] = useState(true);
+	const [detectedHandsCount, setDetectedHandsCount] = useState(0);
+	const [isArmDetected, setIsArmDetected] = useState(false);
+	const [isMoving, setIsMoving] = useState(false);
+	const [isComposing, setIsComposing] = useState(false);
+	const [activeSign, setActiveSign] = useState<RecognizedSign | null>(null);
+	const [lastConfirmedSign, setLastConfirmedSign] = useState<RecognizedSign | null>(null);
+	const [recentSigns, setRecentSigns] = useState<RecognizedSign[]>([]);
+	const [wordBuffer, setWordBuffer] = useState<string[]>([]);
+	const [recognizedText, setRecognizedText] = useState<string | null>(null);
+	const [composedSentence, setComposedSentence] = useState<string | null>(null);
+	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
 
-				composeSignSentence(words)
-					.then((sentence) => {
-						setRecognizedText(sentence);
-						sendChatText(currentRoom, sentence);
-					})
-					.catch(() => {
-						const fallback = words.join(" ");
-						setRecognizedText(fallback);
-						sendChatText(currentRoom, fallback);
-					});
-			}, UTTERANCE_IDLE_MS),
-		[],
-	);
-	useEffect(() => () => flushUtterance.cancel(), [flushUtterance]);
-
-	useEffect(() => {
-		let cancelled = false;
-		let stream: MediaStream | undefined;
-		navigator.mediaDevices
-			.getUserMedia({ video: true })
-			.then((s) => {
-				if (cancelled) {
-					for (const track of s.getTracks()) track.stop();
-					return;
-				}
-				stream = s;
-				if (videoRef.current) videoRef.current.srcObject = s;
-			})
-			.catch(() => setCameraError(true));
-		return () => {
-			cancelled = true;
-			for (const track of stream?.getTracks() ?? []) track.stop();
-		};
+	// Start webcam stream
+	const startCamera = useCallback(async () => {
+		try {
+			setCameraError(false);
+			if (streamRef.current) {
+				for (const track of streamRef.current.getTracks()) track.stop();
+			}
+			const stream = await navigator.mediaDevices.getUserMedia({
+				video: {
+					width: { ideal: 1280 },
+					height: { ideal: 720 },
+					facingMode: "user",
+				},
+				audio: false,
+			});
+			streamRef.current = stream;
+			if (videoRef.current) {
+				videoRef.current.srcObject = stream;
+				await videoRef.current.play().catch(() => {});
+			}
+			setIsCameraActive(true);
+		} catch (err) {
+			console.error("Camera access error:", err);
+			setCameraError(true);
+			setIsCameraActive(false);
+		}
 	}, []);
 
-	usePoseLandmarker(videoRef, room !== null, (result: PoseLandmarkerResult) => {
+	// Stop webcam stream
+	const stopCamera = useCallback(() => {
+		if (streamRef.current) {
+			for (const track of streamRef.current.getTracks()) track.stop();
+			streamRef.current = null;
+		}
+		if (videoRef.current) videoRef.current.srcObject = null;
+		if (canvasRef.current) {
+			const ctx = canvasRef.current.getContext("2d");
+			ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+		}
+		setIsCameraActive(false);
+		setDetectedHandsCount(0);
+		setIsArmDetected(false);
+		setActiveSign(null);
+	}, []);
+
+	const toggleCamera = useCallback(() => {
+		if (isCameraActive) stopCamera();
+		else startCamera();
+	}, [isCameraActive, startCamera, stopCamera]);
+
+	const toggleSkeleton = useCallback(() => {
+		setShowSkeleton((prev) => {
+			if (prev && canvasRef.current) {
+				const ctx = canvasRef.current.getContext("2d");
+				ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+			}
+			return !prev;
+		});
+	}, []);
+
+	const clearHistory = useCallback(() => {
+		setRecentSigns([]);
+		wordBufferRef.current = [];
+		setWordBuffer([]);
+		setRecognizedText(null);
+		setComposedSentence(null);
+	}, []);
+
+	// Initialize webcam on mount
+	useEffect(() => {
+		startCamera();
+		return () => {
+			stopCamera();
+			if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+		};
+	}, [startCamera, stopCamera]);
+
+	// Debounced LLM translation of word sequence
+	const flushUtterance = useCallback(() => {
+		if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+		utteranceTimerRef.current = setTimeout(() => {
+			const words = [...wordBufferRef.current];
+			if (words.length === 0) return;
+
+			setIsComposing(true);
+			composeSignSentence(words)
+				.then((sentence) => {
+					setComposedSentence(sentence);
+					if (room) {
+						sendChatText(room, sentence);
+					}
+				})
+				.catch(() => {
+					const fallback = words.join(" ");
+					setComposedSentence(fallback);
+					if (room) {
+						sendChatText(room, fallback);
+					}
+				})
+				.finally(() => {
+					setIsComposing(false);
+				});
+		}, UTTERANCE_PAUSE_MS);
+	}, [room]);
+
+	const commitConfirmedSign = useCallback(
+		(sign: RecognizedSign) => {
+			setLastConfirmedSign(sign);
+			setRecentSigns((prev) => [sign, ...prev.slice(0, 9)]);
+
+			// Append word to sentence buffer (avoid consecutive duplicate words in buffer)
+			const lastWord = wordBufferRef.current[wordBufferRef.current.length - 1];
+			if (lastWord !== sign.label) {
+				wordBufferRef.current = [...wordBufferRef.current, sign.label];
+				setWordBuffer([...wordBufferRef.current]);
+				setRecognizedText(wordBufferRef.current.join(" "));
+				flushUtterance();
+			}
+		},
+		[flushUtterance],
+	);
+
+	// Pose Landmarker hook for upper body / arm tracking
+	usePoseLandmarker(videoRef, isCameraActive, (result: PoseLandmarkerResult) => {
 		latestPoseRef.current = result;
+		const pose = latestPoseLandmarks(result);
+		setIsArmDetected(Boolean(pose && pose.length >= 17));
 	});
 
-	useHandLandmarker(videoRef, room !== null, (handResult: HandLandmarkerResult) => {
-		const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
-		const poseLandmarks = latestPoseLandmarks(latestPoseRef.current);
-		windowRef.current.push(
-			extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
-		);
+	const handleKslPrediction = useCallback(
+		(candidate: string | null, confidence: number) => {
+			const meta = candidate ? KSL_WORD_METADATA[candidate] : undefined;
+			const icon = meta?.icon ?? "🤟";
+			const desc = meta?.description ?? `KSL 수어: ${candidate}`;
 
-		const frames = windowRef.current.toArray();
-		if (!frames || predictingRef.current) return;
+			if (candidate) {
+				setActiveSign({
+					id: `ksl_${candidate}`,
+					label: candidate,
+					description: desc,
+					icon,
+					confidence,
+					category: "action",
+					timestamp: Date.now(),
+				});
+			}
 
-		predictingRef.current = true;
-		predictSign(frames)
-			.then(({ label, confidence }) => {
-				const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
-				// Words the trained model doesn't know (e.g. 병원/예약/도움) can still be
-				// recognized if the signer recorded reference samples for them below.
-				const candidate = lstmCandidate ?? matchReference(frames)?.word ?? null;
+			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
+			if (candidate && isConfirmed) {
+				const kslSign: RecognizedSign = {
+					id: `ksl_${candidate}_${Date.now()}`,
+					label: candidate,
+					description: desc,
+					icon,
+					confidence,
+					category: "action",
+					timestamp: Date.now(),
+				};
+				commitConfirmedSign(kslSign);
+			}
+		},
+		[commitConfirmedSign],
+	);
 
-				if (candidate === lastCandidateRef.current) {
-					candidateStreakRef.current += 1;
-				} else {
-					lastCandidateRef.current = candidate;
-					candidateStreakRef.current = 1;
+	// Main Frame processing callback with Velocity Gating
+	const handleLandmarkerResult = useCallback(
+		(handResult: HandLandmarkerResult) => {
+			const hands = handResult.landmarks ?? [];
+			setDetectedHandsCount(hands.length);
+
+			const poseLandmarks = latestPoseLandmarks(latestPoseRef.current);
+			renderLandmarksToCanvas(
+				canvasRef.current,
+				videoRef.current,
+				hands,
+				poseLandmarks,
+				showSkeleton,
+			);
+
+			const now = performance.now();
+
+			// 1. Calculate Kinematic Motion Velocity
+			const { isMoving: currentMoving } = calculateInstantVelocity(
+				motionTrackerRef.current,
+				poseLandmarks,
+				now,
+			);
+			setIsMoving(currentMoving);
+
+			// 2. Velocity-Gated Static Gesture & Arm Pose Recognition
+			// When moving: static rules are MUTED to eliminate transient noise (e.g. number 4 during thank you)
+			// When still/settled: static rules fire immediately for instant feedback
+			if (!currentMoving) {
+				const armCandidate = recognizeArmPoseSign(poseLandmarks, now);
+				const handCandidate = recognizeSignGesture(hands, now);
+				const staticCandidate = armCandidate ?? handCandidate;
+
+				const { activeSign: gestureActive, confirmedSign: gestureConfirmed } =
+					filterRef.current?.update(staticCandidate, now) ?? {
+						activeSign: null,
+						confirmedSign: null,
+					};
+
+				if (gestureActive) {
+					setActiveSign(gestureActive);
 				}
-
-				if (candidate === null && candidateStreakRef.current >= NO_SIGN_STREAK_TO_RESET) {
-					insertedForSegmentRef.current = false;
+				if (gestureConfirmed) {
+					commitConfirmedSign(gestureConfirmed);
 				}
+			}
 
-				if (
-					candidate &&
-					candidateStreakRef.current >= CONSECUTIVE_REQUIRED &&
-					!insertedForSegmentRef.current
-				) {
-					insertedForSegmentRef.current = true;
-					wordBufferRef.current = [...wordBufferRef.current, candidate];
-					setRecognizedText(wordBufferRef.current.join(" "));
-					flushUtterance();
-				}
-			})
-			.finally(() => {
-				predictingRef.current = false;
-			});
-	});
+			// 3. Dynamic 30-Frame Sequence Recognition (LSTM + DTW)
+			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
+			windowRef.current.push(
+				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
+			);
 
-	// Records the last 30 captured frames as one reference sample for `word`.
-	// Returns false if the window hasn't filled yet (call again a moment later).
-	function recordReference(word: string): boolean {
+			const frames = windowRef.current.toArray();
+			if (!frames || predictingRef.current) return;
+
+			predictingRef.current = true;
+			predictSign(frames)
+				.then(({ label, confidence }) => {
+					const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+					const dtwMatch = matchReference(frames);
+					const finalCandidate = lstmCandidate ?? dtwMatch?.word ?? null;
+					const finalConfidence = lstmCandidate ? confidence : dtwMatch ? 0.9 : 0;
+
+					if (finalCandidate) {
+						handleKslPrediction(finalCandidate, finalConfidence);
+					}
+				})
+				.catch((err) => {
+					console.error("Sign prediction error:", err);
+				})
+				.finally(() => {
+					predictingRef.current = false;
+				});
+		},
+		[showSkeleton, commitConfirmedSign, handleKslPrediction],
+	);
+
+	const { isLoading: isLoadingModel, isReady: isModelReady } = useHandLandmarker(
+		videoRef,
+		isCameraActive,
+		handleLandmarkerResult,
+	);
+
+	const recordReference = useCallback((word: string): boolean => {
 		const frames = windowRef.current.toArray();
 		if (!frames || !word.trim()) return false;
 		saveReference(word.trim(), frames);
 		setReferences(listReferences());
 		return true;
-	}
+	}, []);
 
-	function removeReference(word: string) {
+	const removeReference = useCallback((word: string) => {
 		clearReference(word);
 		setReferences(listReferences());
-	}
+	}, []);
 
-	return { videoRef, recognizedText, cameraError, references, recordReference, removeReference };
+	return {
+		videoRef,
+		canvasRef,
+		isCameraActive,
+		cameraError,
+		isLoadingModel,
+		isModelReady,
+		showSkeleton,
+		detectedHandsCount,
+		isArmDetected,
+		isMoving,
+		isComposing,
+		activeSign,
+		lastConfirmedSign,
+		recentSigns,
+		wordBuffer,
+		recognizedText,
+		composedSentence,
+		references,
+		toggleCamera,
+		toggleSkeleton,
+		clearHistory,
+		recordReference,
+		removeReference,
+	};
 }

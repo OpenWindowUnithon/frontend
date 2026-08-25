@@ -26,8 +26,7 @@ export default defineConfig({
 				return [
 					{
 						tag: "style",
-						children:
-							"@layer theme, base, seed-base, components, seed-components, utilities;",
+						children: "@layer theme, base, seed-base, components, seed-components, utilities;",
 						injectTo: "head-prepend",
 					},
 				];
