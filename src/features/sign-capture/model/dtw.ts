@@ -130,21 +130,32 @@ export interface DtwMatch {
 	distance: number;
 }
 
-/** Finds the closest saved reference to `sequence` (raw, un-normalized), or null if nothing is within threshold. */
-export function matchReference(
-	sequence: number[][],
-	threshold = DEFAULT_DTW_THRESHOLD,
-): DtwMatch | null {
+/**
+ * Finds the closest saved reference to `sequence` (raw, un-normalized) regardless of
+ * threshold -- exposed separately from matchReference so the caller can show diagnostics
+ * (e.g. "closest match: 병원, distance 0.83, threshold 0.60") even when nothing currently
+ * passes, instead of the recognizer being a black box when it isn't matching.
+ */
+export function closestReference(sequence: number[][]): DtwMatch | null {
 	const store = loadReferences();
 	const normalized = normalizeSequence(sequence);
 	let best: DtwMatch | null = null;
 	for (const [word, samples] of Object.entries(store)) {
 		for (const sample of samples) {
 			const distance = dtwDistance(normalized, sample);
-			if (distance <= threshold && (!best || distance < best.distance)) {
+			if (!best || distance < best.distance) {
 				best = { word, distance };
 			}
 		}
 	}
 	return best;
+}
+
+/** Finds the closest saved reference to `sequence` (raw, un-normalized), or null if nothing is within threshold. */
+export function matchReference(
+	sequence: number[][],
+	threshold = DEFAULT_DTW_THRESHOLD,
+): DtwMatch | null {
+	const best = closestReference(sequence);
+	return best && best.distance <= threshold ? best : null;
 }

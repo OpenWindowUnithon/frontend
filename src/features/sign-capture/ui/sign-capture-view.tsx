@@ -16,12 +16,17 @@ import {
 	Trash2,
 	User,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CaptionType } from "@/entities/caption";
 import { Button, Input } from "@/shared/ui";
+import { DEFAULT_DTW_THRESHOLD } from "../model/dtw";
 import { KSL_WORD_METADATA } from "../model/sign-model";
 import type { RecognizedSign } from "../model/types";
-import { useSignCapture } from "../model/use-sign-capture";
+import {
+	type RecognitionDebug,
+	UTTERANCE_PAUSE_MS,
+	useSignCapture,
+} from "../model/use-sign-capture";
 
 // Only the real, sequence-trained KSL words -- the guide used to also list a handful of
 // single-frame static gestures (thumbs up, OK sign, finger-counted numbers), but that
@@ -109,6 +114,61 @@ function ActiveSignBadge({ activeSign }: { activeSign: RecognizedSign | null }) 
 				인식 중
 			</span>
 		</div>
+	);
+}
+
+// Always-on technical readout of what the recognizer is actually seeing -- both LSTM's top
+// guess/confidence and the closest DTW reference (even above threshold, so a near-miss custom
+// word is visible instead of the recognizer just looking silently broken).
+function RecognitionDebugStrip({ debug }: { debug: RecognitionDebug | null }) {
+	if (!debug) return null;
+
+	const lstmText = debug.lstmLabel
+		? `${debug.lstmLabel} ${Math.round(debug.lstmConfidence * 100)}%`
+		: `없음 (${Math.round(debug.lstmConfidence * 100)}%)`;
+	const dtwText = debug.dtwWord
+		? `${debug.dtwWord} · 거리 ${debug.dtwDistance?.toFixed(2)} / 임계값 ${DEFAULT_DTW_THRESHOLD}`
+		: "저장된 커스텀 단어 없음";
+
+	return (
+		<div className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-neutral-800 bg-neutral-900/60 px-3 py-1.5 font-mono text-[11px] text-neutral-400">
+			<span>LSTM: {lstmText}</span>
+			<span className="text-neutral-700">|</span>
+			<span>DTW 최근접: {dtwText}</span>
+		</div>
+	);
+}
+
+// Ticks locally (display-only) so the signer knows exactly how much longer to wait before the
+// buffered words get sent off for translation, instead of the 3s pause being invisible.
+function UtteranceCountdown({
+	wordBuffer,
+	lastConfirmedAt,
+	isComposing,
+}: {
+	wordBuffer: string[];
+	lastConfirmedAt: number | null;
+	isComposing: boolean;
+}) {
+	const pending = wordBuffer.length > 0 && !isComposing && lastConfirmedAt !== null;
+	const [now, setNow] = useState(() => Date.now());
+
+	useEffect(() => {
+		if (!pending) return;
+		const id = setInterval(() => setNow(Date.now()), 200);
+		return () => clearInterval(id);
+	}, [pending]);
+
+	if (!pending || lastConfirmedAt === null) return null;
+
+	const remainingMs = UTTERANCE_PAUSE_MS - (now - lastConfirmedAt);
+	if (remainingMs <= 0) return null;
+
+	return (
+		<p className="text-[11px] text-neutral-400">
+			{Math.ceil(remainingMs / 1000)}초간 더 동작이 없으면 "{wordBuffer.join(" ")}"를 문장으로
+			번역합니다.
+		</p>
 	);
 }
 
@@ -399,9 +459,12 @@ export function SignCaptureView({
 		isArmDetected,
 		isComposing,
 		activeSign,
+		lastConfirmedSign,
 		recentSigns,
+		wordBuffer,
 		composedSentences,
 		references,
+		recognitionDebug,
 		isRecordingWord,
 		recordingSecond,
 		recordingTotalSeconds,
@@ -504,6 +567,16 @@ export function SignCaptureView({
 					</div>
 				)}
 			</div>
+
+			{/* Recognition Clarity: what LSTM/DTW are actually seeing right now */}
+			<RecognitionDebugStrip debug={recognitionDebug} />
+
+			{/* When the buffered words will be sent off for translation */}
+			<UtteranceCountdown
+				wordBuffer={wordBuffer}
+				lastConfirmedAt={lastConfirmedSign?.timestamp ?? null}
+				isComposing={isComposing}
+			/>
 
 			{/* AI Translated Natural Sentence Banner */}
 			<SentenceResultBanner composedSentences={composedSentences} isComposing={isComposing} />

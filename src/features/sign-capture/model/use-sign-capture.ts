@@ -11,9 +11,9 @@ import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/sh
 import { type ConversationTurn, composeSignSentence } from "../api/sign-api";
 import {
 	clearReference,
+	closestReference,
 	DEFAULT_DTW_THRESHOLD,
 	listReferences,
-	matchReference,
 	saveReference,
 } from "./dtw";
 import {
@@ -24,6 +24,14 @@ import {
 } from "./landmarks";
 import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
 import type { RecognizedSign } from "./types";
+
+/** Live LSTM/DTW readout for the recognition-clarity debug strip -- not used for logic. */
+export interface RecognitionDebug {
+	lstmLabel: string | null;
+	lstmConfidence: number;
+	dtwWord: string | null;
+	dtwDistance: number | null;
+}
 
 export interface UseSignCaptureReturn {
 	videoRef: RefObject<HTMLVideoElement | null>;
@@ -43,6 +51,7 @@ export interface UseSignCaptureReturn {
 	wordBuffer: string[];
 	composedSentences: string[];
 	references: Record<string, number>;
+	recognitionDebug: RecognitionDebug | null;
 	isRecordingWord: boolean;
 	recordingSecond: number;
 	recordingTotalSeconds: number;
@@ -57,7 +66,7 @@ export interface UseSignCaptureReturn {
 
 const CONSECUTIVE_REQUIRED = 2;
 const NO_SIGN_STREAK_TO_RESET = 5;
-const UTTERANCE_PAUSE_MS = 3000;
+export const UTTERANCE_PAUSE_MS = 3000;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
 // How many past translated sentences to keep around for display -- translation keeps
@@ -72,6 +81,46 @@ const RECORD_REPS = RECORD_TOTAL_SECONDS;
 // Skip a per-second bucket that's mostly empty (hand out of frame, dropped frames) rather
 // than saving a near-empty/garbage reference sample for it.
 const MIN_SEGMENT_FRAMES = 5;
+
+interface ResolvedPrediction {
+	finalCandidate: string | null;
+	finalConfidence: number;
+	isDtw: boolean;
+	debug: RecognitionDebug;
+}
+
+// Combines the LSTM's per-frame classification with the closest DTW reference match (LSTM
+// wins when confident, DTW is the fallback for custom words) and packages a debug snapshot
+// alongside it -- pulled out of handleLandmarkerResult's predictSign callback to keep that
+// callback's cognitive complexity down.
+function resolvePrediction(
+	frames: number[][],
+	label: string | null,
+	confidence: number,
+): ResolvedPrediction {
+	const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+	// Always compute the closest DTW reference (even above threshold) so the debug readout
+	// can show it -- otherwise a near-miss custom word is invisible to the user instead of
+	// showing "so close, just tune the threshold or re-record."
+	const dtwBest = closestReference(frames);
+	const dtwMatch = dtwBest && dtwBest.distance <= DEFAULT_DTW_THRESHOLD ? dtwBest : null;
+	// DTW has no natural 0-1 confidence -- derive one from how close the match distance is
+	// to the threshold, so a borderline match doesn't look as trustworthy in the UI as a
+	// near-exact one.
+	const dtwConfidence = dtwMatch ? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD) : 0;
+
+	return {
+		finalCandidate: lstmCandidate ?? dtwMatch?.word ?? null,
+		finalConfidence: lstmCandidate ? confidence : dtwConfidence,
+		isDtw: !lstmCandidate,
+		debug: {
+			lstmLabel: label,
+			lstmConfidence: confidence,
+			dtwWord: dtwBest?.word ?? null,
+			dtwDistance: dtwBest?.distance ?? null,
+		},
+	};
+}
 
 function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
@@ -110,17 +159,25 @@ interface PredictionState {
 	lastConfirmedCandidate: string | null;
 }
 
-// Confirms a candidate once it has held steady for CONSECUTIVE_REQUIRED frames, as long as
-// it isn't the same word already confirmed last (which would just be the signer continuing
-// to hold the same pose). Gating on "already confirmed *this word*" rather than "already
+// Confirms a candidate once it has held steady for `requiredStreak` frames, as long as it
+// isn't the same word already confirmed last (which would just be the signer continuing to
+// hold the same pose). Gating on "already confirmed *this word*" rather than "already
 // confirmed *something* this segment" is what lets consecutive different words (A -> B with
 // no no-sign gap in between, since the recognizer doesn't reliably dip to null between two
 // signs performed back-to-back) each get confirmed on their own -- previously a single
 // shared `insertedForSegment` flag only re-armed after a sustained no-sign streak, so a
 // second word right after the first was silently dropped unless the signer paused.
+//
+// requiredStreak is 1 for DTW-sourced candidates (see handleLandmarkerResult): a DTW match
+// already means "the whole last-30-frame window closely matches the reference," a judgment
+// over the full window, unlike the LSTM's per-frame class score -- and because that window
+// slides by one frame at a time, a genuine match can occur for only a single frame before
+// sliding past alignment, so requiring 2 consecutive hits (as for LSTM) made custom words
+// effectively never confirm in practice.
 function updateCandidateStreak(
 	state: PredictionState,
 	candidate: string | null,
+	requiredStreak: number = CONSECUTIVE_REQUIRED,
 ): { isConfirmed: boolean } {
 	if (candidate === state.lastCandidate) {
 		state.candidateStreak += 1;
@@ -136,7 +193,7 @@ function updateCandidateStreak(
 		return { isConfirmed: false };
 	}
 
-	if (state.candidateStreak >= CONSECUTIVE_REQUIRED && state.lastConfirmedCandidate !== candidate) {
+	if (state.candidateStreak >= requiredStreak && state.lastConfirmedCandidate !== candidate) {
 		state.lastConfirmedCandidate = candidate;
 		return { isConfirmed: true };
 	}
@@ -202,6 +259,7 @@ export function useSignCapture(
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
 	const [composedSentences, setComposedSentences] = useState<string[]>([]);
 	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
+	const [recognitionDebug, setRecognitionDebug] = useState<RecognitionDebug | null>(null);
 	const [isRecordingWord, setIsRecordingWord] = useState(false);
 	const [recordingSecond, setRecordingSecond] = useState(0);
 	const [recordingResult, setRecordingResult] = useState<{ ok: boolean; message: string } | null>(
@@ -251,6 +309,7 @@ export function useSignCapture(
 		setDetectedHandsCount(0);
 		setIsArmDetected(false);
 		setActiveSign(null);
+		setRecognitionDebug(null);
 	}, []);
 
 	const toggleCamera = useCallback(() => {
@@ -363,12 +422,16 @@ export function useSignCapture(
 	});
 
 	const handleKslPrediction = useCallback(
-		(candidate: string | null, confidence: number) => {
+		(candidate: string | null, confidence: number, isDtw: boolean) => {
 			const meta = candidate ? KSL_WORD_METADATA[candidate] : undefined;
 			const icon = meta?.icon ?? "🤟";
 			const desc = meta?.description ?? `KSL 수어: ${candidate}`;
 
-			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
+			const { isConfirmed } = updateCandidateStreak(
+				predictionStateRef.current,
+				candidate,
+				isDtw ? 1 : CONSECUTIVE_REQUIRED,
+			);
 
 			if (candidate) {
 				setActiveSign({
@@ -442,19 +505,14 @@ export function useSignCapture(
 			predictingRef.current = true;
 			predictSign(frames)
 				.then(({ label, confidence }) => {
-					const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
-					const dtwMatch = matchReference(frames);
-					const finalCandidate = lstmCandidate ?? dtwMatch?.word ?? null;
-					// DTW has no natural 0-1 confidence -- derive one from how close the match
-					// distance is to the threshold, so a borderline match doesn't look as
-					// trustworthy in the UI as a near-exact one.
-					const dtwConfidence = dtwMatch
-						? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD)
-						: 0;
-					const finalConfidence = lstmCandidate ? confidence : dtwConfidence;
-
+					const { finalCandidate, finalConfidence, isDtw, debug } = resolvePrediction(
+						frames,
+						label,
+						confidence,
+					);
+					setRecognitionDebug(debug);
 					if (finalCandidate) {
-						handleKslPrediction(finalCandidate, finalConfidence);
+						handleKslPrediction(finalCandidate, finalConfidence, isDtw);
 					}
 				})
 				.catch((err) => {
@@ -526,6 +584,7 @@ export function useSignCapture(
 			setRecordingResult(null);
 			setRecordingSecond(1);
 			setIsRecordingWord(true);
+			setRecognitionDebug(null);
 
 			recordingTickTimerRef.current = setInterval(() => {
 				const elapsedMs = performance.now() - recordingStartRef.current;
@@ -577,6 +636,7 @@ export function useSignCapture(
 		recognizedText,
 		composedSentences,
 		references,
+		recognitionDebug,
 		isRecordingWord,
 		recordingSecond,
 		recordingTotalSeconds: RECORD_TOTAL_SECONDS,
