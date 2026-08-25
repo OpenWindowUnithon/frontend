@@ -478,7 +478,12 @@ export function useSignCapture(
 				}
 				onSentence?.(sentence);
 			})
-			.catch(() => {
+			.catch((error) => {
+				// Falling back to the raw joined words is intentional (never drop the signer's
+				// message), but doing it silently makes a failed compose call indistinguishable
+				// from the LLM genuinely returning the words unchanged -- log it so a network/API
+				// failure is diagnosable instead of just looking like "GPT isn't running".
+				console.error("[sign-capture] compose failed, sending raw words instead:", error);
 				const fallback = words.join(" ");
 				setComposedSentences((prev) => [...prev, fallback].slice(-MAX_DISPLAYED_SENTENCES));
 				const turn: ConversationTurn = { speaker: "DEAF", text: fallback };
