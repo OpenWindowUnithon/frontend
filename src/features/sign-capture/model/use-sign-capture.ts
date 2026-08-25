@@ -43,10 +43,15 @@ export interface UseSignCaptureReturn {
 	wordBuffer: string[];
 	composedSentence: string | null;
 	references: Record<string, number>;
+	isRecordingWord: boolean;
+	recordingSecond: number;
+	recordingTotalSeconds: number;
+	recordingResult: { ok: boolean; message: string } | null;
 	toggleCamera: () => void;
 	toggleSkeleton: () => void;
 	clearHistory: () => void;
-	recordReference: (word: string) => boolean;
+	startRecordingReference: (word: string) => boolean;
+	cancelRecordingReference: () => void;
 	removeReference: (word: string) => void;
 }
 
@@ -55,6 +60,14 @@ const NO_SIGN_STREAK_TO_RESET = 5;
 const UTTERANCE_PAUSE_MS = 3000;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
+// Custom-word recording: the signer repeats the gesture once per second for this long, and
+// the continuous recording is split into one DTW reference sample per second -- this matches
+// dtw.ts's MAX_SAMPLES_PER_WORD (10), so a single take fully replaces a word's reference set.
+const RECORD_TOTAL_SECONDS = 10;
+const RECORD_REPS = RECORD_TOTAL_SECONDS;
+// Skip a per-second bucket that's mostly empty (hand out of frame, dropped frames) rather
+// than saving a near-empty/garbage reference sample for it.
+const MIN_SEGMENT_FRAMES = 5;
 
 function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
@@ -153,6 +166,14 @@ export function useSignCapture(
 	const historyRef = useRef<ConversationTurn[]>([]);
 	const processedCaptionIdsRef = useRef<Set<string>>(new Set());
 
+	// Custom-word (DTW) recording: continuously buffers frames for RECORD_TOTAL_SECONDS while
+	// recordingWordRef is set, then finishRecordingReference splits them into per-second samples.
+	const recordingWordRef = useRef<string | null>(null);
+	const recordingFramesRef = useRef<{ t: number; f: number[] }[]>([]);
+	const recordingStartRef = useRef(0);
+	const recordingTickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const recordingEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	const [isCameraActive, setIsCameraActive] = useState(true);
 	const [cameraError, setCameraError] = useState(false);
 	const [showSkeleton, setShowSkeleton] = useState(true);
@@ -166,6 +187,11 @@ export function useSignCapture(
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
 	const [composedSentence, setComposedSentence] = useState<string | null>(null);
 	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
+	const [isRecordingWord, setIsRecordingWord] = useState(false);
+	const [recordingSecond, setRecordingSecond] = useState(0);
+	const [recordingResult, setRecordingResult] = useState<{ ok: boolean; message: string } | null>(
+		null,
+	);
 
 	// Start webcam stream
 	const startCamera = useCallback(async () => {
@@ -241,6 +267,8 @@ export function useSignCapture(
 		return () => {
 			stopCamera();
 			if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+			if (recordingTickTimerRef.current) clearInterval(recordingTickTimerRef.current);
+			if (recordingEndTimerRef.current) clearTimeout(recordingEndTimerRef.current);
 		};
 	}, [startCamera, stopCamera]);
 
@@ -378,9 +406,14 @@ export function useSignCapture(
 			);
 
 			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
-			windowRef.current.push(
-				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
-			);
+			const features = extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks });
+			windowRef.current.push(features);
+			if (recordingWordRef.current) {
+				recordingFramesRef.current.push({
+					t: performance.now() - recordingStartRef.current,
+					f: features,
+				});
+			}
 
 			const frames = windowRef.current.toArray();
 			if (!frames || predictingRef.current) return;
@@ -419,12 +452,85 @@ export function useSignCapture(
 		handleLandmarkerResult,
 	);
 
-	const recordReference = useCallback((word: string): boolean => {
-		const frames = windowRef.current.toArray();
-		if (!frames || !word.trim()) return false;
-		saveReference(word.trim(), frames);
+	// Splits the just-recorded continuous take into one reference sample per second (bucketed
+	// by elapsed time, not frame count, so it's robust to frame-rate jitter) and replaces the
+	// word's entire reference set with them -- a full 10s take is meant to supersede whatever
+	// was recorded before, not accumulate alongside it.
+	const finishRecordingReference = useCallback(() => {
+		if (recordingTickTimerRef.current) clearInterval(recordingTickTimerRef.current);
+		if (recordingEndTimerRef.current) clearTimeout(recordingEndTimerRef.current);
+		recordingTickTimerRef.current = null;
+		recordingEndTimerRef.current = null;
+
+		const word = recordingWordRef.current;
+		const frames = recordingFramesRef.current;
+		recordingWordRef.current = null;
+		recordingFramesRef.current = [];
+		setIsRecordingWord(false);
+		setRecordingSecond(0);
+		if (!word) return;
+
+		const buckets: number[][][] = Array.from({ length: RECORD_REPS }, () => []);
+		for (const { t, f } of frames) {
+			const idx = Math.min(RECORD_REPS - 1, Math.floor(t / 1000));
+			buckets[idx]?.push(f);
+		}
+
+		clearReference(word);
+		let saved = 0;
+		for (const bucket of buckets) {
+			if (bucket.length < MIN_SEGMENT_FRAMES) continue;
+			saveReference(word, bucket);
+			saved += 1;
+		}
 		setReferences(listReferences());
-		return true;
+		setRecordingResult(
+			saved > 0
+				? { ok: true, message: `'${word}' 동작 샘플 ${saved}개를 저장했습니다.` }
+				: {
+						ok: false,
+						message: "동작이 감지되지 않았습니다. 손이 잘 보이는 곳에서 다시 시도해주세요.",
+					},
+		);
+	}, []);
+
+	const startRecordingReference = useCallback(
+		(word: string): boolean => {
+			const trimmed = word.trim();
+			if (!trimmed || recordingWordRef.current) return false;
+
+			recordingWordRef.current = trimmed;
+			recordingFramesRef.current = [];
+			recordingStartRef.current = performance.now();
+			setRecordingResult(null);
+			setRecordingSecond(1);
+			setIsRecordingWord(true);
+
+			recordingTickTimerRef.current = setInterval(() => {
+				const elapsedMs = performance.now() - recordingStartRef.current;
+				setRecordingSecond(Math.min(RECORD_TOTAL_SECONDS, Math.floor(elapsedMs / 1000) + 1));
+			}, 1000);
+			recordingEndTimerRef.current = setTimeout(
+				finishRecordingReference,
+				RECORD_TOTAL_SECONDS * 1000,
+			);
+
+			return true;
+		},
+		[finishRecordingReference],
+	);
+
+	const cancelRecordingReference = useCallback(() => {
+		if (!recordingWordRef.current) return;
+		if (recordingTickTimerRef.current) clearInterval(recordingTickTimerRef.current);
+		if (recordingEndTimerRef.current) clearTimeout(recordingEndTimerRef.current);
+		recordingTickTimerRef.current = null;
+		recordingEndTimerRef.current = null;
+		recordingWordRef.current = null;
+		recordingFramesRef.current = [];
+		setIsRecordingWord(false);
+		setRecordingSecond(0);
+		setRecordingResult(null);
 	}, []);
 
 	const removeReference = useCallback((word: string) => {
@@ -450,10 +556,15 @@ export function useSignCapture(
 		recognizedText,
 		composedSentence,
 		references,
+		isRecordingWord,
+		recordingSecond,
+		recordingTotalSeconds: RECORD_TOTAL_SECONDS,
+		recordingResult,
 		toggleCamera,
 		toggleSkeleton,
 		clearHistory,
-		recordReference,
+		startRecordingReference,
+		cancelRecordingReference,
 		removeReference,
 	};
 }

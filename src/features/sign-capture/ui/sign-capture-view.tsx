@@ -198,26 +198,29 @@ function RecentSignsHistory({
 
 function CustomWordRecorder({
 	references,
-	onRecord,
+	isRecording,
+	recordingSecond,
+	recordingTotalSeconds,
+	recordingResult,
+	onStartRecording,
+	onCancelRecording,
 	onRemove,
 }: {
 	references: Record<string, number>;
-	onRecord: (word: string) => boolean;
+	isRecording: boolean;
+	recordingSecond: number;
+	recordingTotalSeconds: number;
+	recordingResult: { ok: boolean; message: string } | null;
+	onStartRecording: (word: string) => boolean;
+	onCancelRecording: () => void;
 	onRemove: (word: string) => void;
 }) {
 	const [newWord, setNewWord] = useState("");
-	const [recordHint, setRecordHint] = useState<string | null>(null);
 
-	const handleRecord = () => {
+	const handleStart = () => {
 		const word = newWord.trim();
 		if (!word) return;
-		const ok = onRecord(word);
-		if (ok) {
-			setRecordHint(`'${word}' 동작 샘플을 저장했습니다.`);
-			setNewWord("");
-		} else {
-			setRecordHint("카메라 프레임이 충분히 모이지 않았습니다. 잠시 후 다시 눌러주세요.");
-		}
+		onStartRecording(word);
 	};
 
 	return (
@@ -228,27 +231,67 @@ function CustomWordRecorder({
 			</summary>
 			<div className="flex flex-col gap-2.5 pt-3">
 				<p className="text-neutral-400 text-xs leading-relaxed">
-					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 표현한 뒤 "이 동작 저장"을
-					누르면, 브라우저가 기억하여 다음부터 인식합니다.
+					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 등록해보세요. "학습 시작"을 누르면{" "}
+					{recordingTotalSeconds}초 동안 1초에 한 번씩 그 단어의 동작을 반복해주시면 자동으로 나눠서
+					저장합니다.
 				</p>
 				<div className="flex gap-2">
 					<Input
 						placeholder="단어 이름 (예: 병원)"
 						value={newWord}
 						onChange={(e) => setNewWord(e.target.value)}
+						disabled={isRecording}
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
-					<Button
-						size="sm"
-						disabled={!newWord.trim()}
-						onClick={handleRecord}
-						className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
-					>
-						<Plus className="h-3.5 w-3.5" />
-						동작 저장
-					</Button>
+					{isRecording ? (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={onCancelRecording}
+							className="shrink-0 gap-1 border-red-500/40 text-red-300 hover:bg-red-500/10"
+						>
+							취소
+						</Button>
+					) : (
+						<Button
+							size="sm"
+							disabled={!newWord.trim()}
+							onClick={handleStart}
+							className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
+						>
+							<Plus className="h-3.5 w-3.5" />
+							학습 시작
+						</Button>
+					)}
 				</div>
-				{recordHint && <p className="font-medium text-amber-300 text-xs">{recordHint}</p>}
+
+				{isRecording && (
+					<div className="flex flex-col gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5">
+						<span className="font-semibold text-blue-300 text-xs">
+							{recordingSecond}초 / {recordingTotalSeconds}초 — 1초에 한 번씩 동작을 반복해주세요
+						</span>
+						<div className="flex gap-1">
+							{Array.from({ length: recordingTotalSeconds }, (_, i) => (
+								<div
+									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length tick display, never reordered
+									key={i}
+									className={`h-1.5 flex-1 rounded-full transition-colors ${
+										i < recordingSecond ? "bg-blue-400" : "bg-neutral-700"
+									}`}
+								/>
+							))}
+						</div>
+					</div>
+				)}
+
+				{!isRecording && recordingResult && (
+					<p
+						className={`font-medium text-xs ${recordingResult.ok ? "text-emerald-300" : "text-amber-300"}`}
+					>
+						{recordingResult.message}
+					</p>
+				)}
+
 				{Object.keys(references).length > 0 && (
 					<ul className="mt-1 flex flex-col gap-1 border-neutral-800 border-t pt-2">
 						{Object.entries(references).map(([word, count]) => (
@@ -259,7 +302,8 @@ function CustomWordRecorder({
 								<button
 									type="button"
 									onClick={() => onRemove(word)}
-									className="flex items-center gap-1 text-red-400 hover:text-red-300"
+									disabled={isRecording}
+									className="flex items-center gap-1 text-red-400 hover:text-red-300 disabled:opacity-40"
 								>
 									<Trash2 className="h-3 w-3" />
 									삭제
@@ -331,10 +375,15 @@ export function SignCaptureView({
 		recentSigns,
 		composedSentence,
 		references,
+		isRecordingWord,
+		recordingSecond,
+		recordingTotalSeconds,
+		recordingResult,
 		toggleCamera,
 		toggleSkeleton,
 		clearHistory,
-		recordReference,
+		startRecordingReference,
+		cancelRecordingReference,
 		removeReference,
 	} = useSignCapture(room, captions);
 
@@ -431,7 +480,12 @@ export function SignCaptureView({
 			{/* Custom DTW Word Recording Component */}
 			<CustomWordRecorder
 				references={references}
-				onRecord={recordReference}
+				isRecording={isRecordingWord}
+				recordingSecond={recordingSecond}
+				recordingTotalSeconds={recordingTotalSeconds}
+				recordingResult={recordingResult}
+				onStartRecording={startRecordingReference}
+				onCancelRecording={cancelRecordingReference}
 				onRemove={removeReference}
 			/>
 
