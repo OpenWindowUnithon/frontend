@@ -50,6 +50,7 @@ export interface UseSignCaptureReturn {
 	composedSentences: string[];
 	references: Record<string, number>;
 	recognitionDebug: RecognitionDebug | null;
+	handsGoneSince: number | null;
 	isRecordingWord: boolean;
 	recordingSecond: number;
 	recordingTotalSeconds: number;
@@ -70,7 +71,11 @@ export interface UseSignCaptureReturn {
 // enough to confirm -- see updateCandidateStreak.
 const REQUIRED_STREAK = 1;
 const NO_SIGN_STREAK_TO_RESET = 5;
-export const UTTERANCE_PAUSE_MS = 3000;
+// If both hands haven't been detected for this long, treat it as the end of the signer's
+// turn and send whatever's been confirmed so far off for translation. Replaces a
+// pause-since-last-confirmed-word debounce, which didn't distinguish "hands down, done
+// signing" from "hands still up, just pausing mid-sentence."
+export const HANDS_GONE_FLUSH_MS = 3000;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
 // How many past translated sentences to keep around for display -- translation keeps
@@ -96,6 +101,8 @@ const MIN_SEGMENT_FRAMES = 5;
 interface ResolvedPrediction {
 	finalCandidate: string | null;
 	finalConfidence: number;
+	closestWord: string | null;
+	closestSimilarity: number;
 	debug: RecognitionDebug;
 }
 
@@ -111,22 +118,47 @@ interface ResolvedPrediction {
 // callback's cognitive complexity down.
 function resolvePrediction(frames: number[][]): ResolvedPrediction {
 	// Always compute the closest DTW reference (even above threshold) so the debug readout
-	// can show it -- otherwise a near-miss custom word is invisible to the user instead of
-	// showing "so close, just tune the threshold or re-record."
+	// and the live "인식 중" card can show it -- otherwise a near-miss custom word is
+	// invisible to the user instead of showing "this is what it thinks you're doing, just
+	// not confidently enough."
 	const dtwBest = closestReference(frames);
+	// Only a match under threshold actually confirms a word into the sentence buffer --
+	// showing every closest guess as a live card is fine (it's just a hint), but sending
+	// every closest guess to the LLM as a "recognized word" would wreck translation quality.
 	const dtwMatch = dtwBest && dtwBest.distance <= DEFAULT_DTW_THRESHOLD ? dtwBest : null;
-	// DTW has no natural 0-1 confidence -- derive one from how close the match distance is
-	// to the threshold, so a borderline match doesn't look as trustworthy in the UI as a
-	// near-exact one.
-	const dtwConfidence = dtwMatch ? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD) : 0;
+	// DTW has no natural 0-1 similarity -- derive one from how close the distance is to the
+	// threshold. Computed for the closest match regardless of whether it clears the
+	// threshold, so it can drive the always-shown card.
+	const similarity = dtwBest ? Math.max(0, 1 - dtwBest.distance / DEFAULT_DTW_THRESHOLD) : 0;
 
 	return {
 		finalCandidate: dtwMatch?.word ?? null,
-		finalConfidence: dtwConfidence,
+		finalConfidence: similarity,
+		closestWord: dtwBest?.word ?? null,
+		closestSimilarity: similarity,
 		debug: {
 			dtwWord: dtwBest?.word ?? null,
 			dtwDistance: dtwBest?.distance ?? null,
 		},
+	};
+}
+
+// Builds the live "인식 중" card from the closest DTW match, or null if there's no reference
+// to compare against at all (no custom words registered yet).
+function buildActiveSignFromClosest(
+	word: string | null,
+	similarity: number,
+): RecognizedSign | null {
+	if (!word) return null;
+	const meta = KSL_WORD_METADATA[word];
+	return {
+		id: `dtw_${word}`,
+		label: word,
+		description: meta?.description ?? `등록한 수어: ${word}`,
+		icon: meta?.icon ?? "🤟",
+		confidence: similarity,
+		category: "action",
+		timestamp: Date.now(),
 	};
 }
 
@@ -231,9 +263,14 @@ export function useSignCapture(
 		lastConfirmedCandidate: null,
 	});
 
-	// Word buffer & Utterance state for LLM translation
+	// Word buffer for LLM translation
 	const wordBufferRef = useRef<string[]>([]);
-	const utteranceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Utterance-end detection: both hands absent for HANDS_GONE_FLUSH_MS triggers a send.
+	// handsGoneAtRef is the timestamp hands were last seen missing (null while visible);
+	// flushedForGapRef prevents re-sending repeatedly for the same absence.
+	const handsGoneAtRef = useRef<number | null>(null);
+	const flushedForGapRef = useRef(false);
 
 	// Conversation history for LLM context: this side's own composed sentences plus the
 	// other side's final captions, in chronological order.
@@ -262,6 +299,7 @@ export function useSignCapture(
 	const [composedSentences, setComposedSentences] = useState<string[]>([]);
 	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
 	const [recognitionDebug, setRecognitionDebug] = useState<RecognitionDebug | null>(null);
+	const [handsGoneSince, setHandsGoneSince] = useState<number | null>(null);
 	const [isRecordingWord, setIsRecordingWord] = useState(false);
 	const [recordingSecond, setRecordingSecond] = useState(0);
 	const [recordingResult, setRecordingResult] = useState<{ ok: boolean; message: string } | null>(
@@ -312,6 +350,9 @@ export function useSignCapture(
 		setIsArmDetected(false);
 		setActiveSign(null);
 		setRecognitionDebug(null);
+		handsGoneAtRef.current = null;
+		flushedForGapRef.current = false;
+		setHandsGoneSince(null);
 	}, []);
 
 	const toggleCamera = useCallback(() => {
@@ -342,7 +383,6 @@ export function useSignCapture(
 		startCamera();
 		return () => {
 			stopCamera();
-			if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
 			if (recordingTickTimerRef.current) clearInterval(recordingTickTimerRef.current);
 			if (recordingEndTimerRef.current) clearTimeout(recordingEndTimerRef.current);
 		};
@@ -360,61 +400,57 @@ export function useSignCapture(
 		}
 	}, [captions]);
 
-	// Debounced LLM translation of word sequence. Fires UTTERANCE_PAUSE_MS after the last
-	// confirmed word; clears the buffer immediately so a word signed while this request is
-	// in flight starts a fresh utterance instead of being resent with the old one.
-	const flushUtterance = useCallback(() => {
-		if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
-		utteranceTimerRef.current = setTimeout(() => {
-			const words = [...wordBufferRef.current];
-			wordBufferRef.current = [];
-			setWordBuffer([]);
-			if (words.length === 0) return;
+	// Sends whatever's in the word buffer off for LLM translation right now -- triggered when
+	// both hands have been gone for HANDS_GONE_FLUSH_MS (see handleLandmarkerResult), not on a
+	// timer per word. Clears the buffer immediately so a word signed while this request is in
+	// flight starts a fresh utterance instead of being resent with the old one.
+	const sendUtteranceNow = useCallback(() => {
+		const words = [...wordBufferRef.current];
+		wordBufferRef.current = [];
+		setWordBuffer([]);
+		if (words.length === 0) return;
 
-			setIsComposing(true);
-			// Snapshot history before this turn -- it must not include the sentence this
-			// call is about to produce.
-			const historyForThisTurn = historyRef.current;
-			composeSignSentence(words, historyForThisTurn)
-				.then((sentence) => {
-					setComposedSentences((prev) => [...prev, sentence].slice(-MAX_DISPLAYED_SENTENCES));
-					const turn: ConversationTurn = { speaker: "DEAF", text: sentence };
-					historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
-					if (room) {
-						sendChatText(room, sentence);
-					}
-				})
-				.catch(() => {
-					const fallback = words.join(" ");
-					setComposedSentences((prev) => [...prev, fallback].slice(-MAX_DISPLAYED_SENTENCES));
-					const turn: ConversationTurn = { speaker: "DEAF", text: fallback };
-					historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
-					if (room) {
-						sendChatText(room, fallback);
-					}
-				})
-				.finally(() => {
-					setIsComposing(false);
-				});
-		}, UTTERANCE_PAUSE_MS);
+		setIsComposing(true);
+		// Snapshot history before this turn -- it must not include the sentence this call is
+		// about to produce.
+		const historyForThisTurn = historyRef.current;
+		composeSignSentence(words, historyForThisTurn)
+			.then((sentence) => {
+				setComposedSentences((prev) => [...prev, sentence].slice(-MAX_DISPLAYED_SENTENCES));
+				const turn: ConversationTurn = { speaker: "DEAF", text: sentence };
+				historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
+				if (room) {
+					sendChatText(room, sentence);
+				}
+			})
+			.catch(() => {
+				const fallback = words.join(" ");
+				setComposedSentences((prev) => [...prev, fallback].slice(-MAX_DISPLAYED_SENTENCES));
+				const turn: ConversationTurn = { speaker: "DEAF", text: fallback };
+				historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
+				if (room) {
+					sendChatText(room, fallback);
+				}
+			})
+			.finally(() => {
+				setIsComposing(false);
+			});
 	}, [room]);
 
-	const commitConfirmedSign = useCallback(
-		(sign: RecognizedSign) => {
-			setLastConfirmedSign(sign);
-			setRecentSigns((prev) => [sign, ...prev.slice(0, 9)]);
+	const commitConfirmedSign = useCallback((sign: RecognizedSign) => {
+		setLastConfirmedSign(sign);
+		setRecentSigns((prev) => [sign, ...prev.slice(0, 9)]);
 
-			// Append word to sentence buffer (avoid consecutive duplicate words in buffer)
-			const lastWord = wordBufferRef.current[wordBufferRef.current.length - 1];
-			if (lastWord !== sign.label) {
-				wordBufferRef.current = [...wordBufferRef.current, sign.label];
-				setWordBuffer([...wordBufferRef.current]);
-				setRecognizedText(wordBufferRef.current.join(" "));
-				flushUtterance();
-			}
-		},
-		[flushUtterance],
-	);
+		// Append word to sentence buffer (avoid consecutive duplicate words in buffer). The
+		// buffer is sent off for translation when both hands go missing for
+		// HANDS_GONE_FLUSH_MS (handleLandmarkerResult), not from here.
+		const lastWord = wordBufferRef.current[wordBufferRef.current.length - 1];
+		if (lastWord !== sign.label) {
+			wordBufferRef.current = [...wordBufferRef.current, sign.label];
+			setWordBuffer([...wordBufferRef.current]);
+			setRecognizedText(wordBufferRef.current.join(" "));
+		}
+	}, []);
 
 	// Pose Landmarker hook for upper body / arm tracking
 	usePoseLandmarker(videoRef, isCameraActive, (result: PoseLandmarkerResult) => {
@@ -423,38 +459,20 @@ export function useSignCapture(
 		setIsArmDetected(Boolean(pose && pose.length >= 17));
 	});
 
+	// Confirms a candidate into the word buffer once it holds steady for REQUIRED_STREAK
+	// frames. Doesn't touch activeSign -- that's driven directly by the closest DTW match
+	// (see handleLandmarkerResult), independent of whether it clears the confirmation
+	// threshold.
 	const handleKslPrediction = useCallback(
 		(candidate: string | null, confidence: number) => {
-			const meta = candidate ? KSL_WORD_METADATA[candidate] : undefined;
-			const icon = meta?.icon ?? "🤟";
-			const desc = meta?.description ?? `등록한 수어: ${candidate}`;
-
 			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
-
-			if (candidate) {
-				setActiveSign({
-					id: `ksl_${candidate}`,
-					label: candidate,
-					description: desc,
-					icon,
-					confidence,
-					category: "action",
-					timestamp: Date.now(),
-				});
-			} else if (predictionStateRef.current.candidateStreak >= NO_SIGN_STREAK_TO_RESET) {
-				// Only clear once the "no sign" streak is sustained, not on every single null
-				// tick -- otherwise the live indicator flickers off during brief detection
-				// gaps mid-gesture. This mirrors the same threshold updateCandidateStreak uses
-				// to reset the segment, so "recognition ended" and "indicator cleared" agree.
-				setActiveSign(null);
-			}
-
 			if (candidate && isConfirmed) {
+				const meta = KSL_WORD_METADATA[candidate];
 				const kslSign: RecognizedSign = {
 					id: `ksl_${candidate}_${Date.now()}`,
 					label: candidate,
-					description: desc,
-					icon,
+					description: meta?.description ?? `등록한 수어: ${candidate}`,
+					icon: meta?.icon ?? "🤟",
 					confidence,
 					category: "action",
 					timestamp: Date.now(),
@@ -465,12 +483,41 @@ export function useSignCapture(
 		[commitConfirmedSign],
 	);
 
+	// Utterance-end detection: both hands gone for HANDS_GONE_FLUSH_MS sends whatever has been
+	// confirmed so far, instead of waiting on a per-word pause timer. Pulled out of
+	// handleLandmarkerResult to keep that callback's cognitive complexity down.
+	const updateHandsGoneTracking = useCallback(
+		(handsLength: number) => {
+			if (handsLength > 0) {
+				if (handsGoneAtRef.current !== null) {
+					handsGoneAtRef.current = null;
+					flushedForGapRef.current = false;
+					setHandsGoneSince(null);
+				}
+				return;
+			}
+
+			if (handsGoneAtRef.current === null) {
+				handsGoneAtRef.current = performance.now();
+				setHandsGoneSince(handsGoneAtRef.current);
+			} else if (
+				!flushedForGapRef.current &&
+				performance.now() - handsGoneAtRef.current >= HANDS_GONE_FLUSH_MS
+			) {
+				flushedForGapRef.current = true;
+				sendUtteranceNow();
+			}
+		},
+		[sendUtteranceNow],
+	);
+
 	// Main frame processing callback: sequence-only DTW recognition, no single-frame
 	// static gesture path.
 	const handleLandmarkerResult = useCallback(
 		(handResult: HandLandmarkerResult) => {
 			const hands = handResult.landmarks ?? [];
 			setDetectedHandsCount(hands.length);
+			updateHandsGoneTracking(hands.length);
 
 			const poseLandmarks = latestPoseLandmarks(latestPoseRef.current);
 			renderLandmarksToCanvas(
@@ -500,11 +547,17 @@ export function useSignCapture(
 			const frames = windowRef.current.toArray();
 			if (!frames) return;
 
-			const { finalCandidate, finalConfidence, debug } = resolvePrediction(frames);
+			const { finalCandidate, finalConfidence, closestWord, closestSimilarity, debug } =
+				resolvePrediction(frames);
 			setRecognitionDebug(debug);
+			// Always show the closest match as a live card, however low the similarity -- lets
+			// the signer see "this is what it thinks you're doing" even when it isn't
+			// confident enough to confirm the word into the sentence.
+			setActiveSign(buildActiveSignFromClosest(closestWord, closestSimilarity));
+
 			handleKslPrediction(finalCandidate, finalConfidence);
 		},
-		[showSkeleton, handleKslPrediction],
+		[showSkeleton, handleKslPrediction, updateHandsGoneTracking],
 	);
 
 	const { isLoading: isLoadingModel, isReady: isModelReady } = useHandLandmarker(
@@ -622,6 +675,7 @@ export function useSignCapture(
 		composedSentences,
 		references,
 		recognitionDebug,
+		handsGoneSince,
 		isRecordingWord,
 		recordingSecond,
 		recordingTotalSeconds: RECORD_TOTAL_SECONDS,

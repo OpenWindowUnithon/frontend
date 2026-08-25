@@ -22,8 +22,8 @@ import { Button, Input } from "@/shared/ui";
 import { DEFAULT_DTW_THRESHOLD } from "../model/dtw";
 import type { RecognizedSign } from "../model/types";
 import {
+	HANDS_GONE_FLUSH_MS,
 	type RecognitionDebug,
-	UTTERANCE_PAUSE_MS,
 	useSignCapture,
 } from "../model/use-sign-capture";
 import { KSL_WORD_METADATA } from "../model/word-metadata";
@@ -134,34 +134,38 @@ function RecognitionDebugStrip({ debug }: { debug: RecognitionDebug | null }) {
 	);
 }
 
-// Ticks locally (display-only) so the signer knows exactly how much longer to wait before the
-// buffered words get sent off for translation, instead of the 3s pause being invisible.
+// Ticks locally (display-only) so the signer knows exactly how much longer their hands can
+// stay out of frame before the buffered words get sent off for translation -- the utterance
+// ends when both hands have been gone for HANDS_GONE_FLUSH_MS, not after a pause since the
+// last confirmed word.
 function UtteranceCountdown({
 	wordBuffer,
-	lastConfirmedAt,
+	handsGoneSince,
 	isComposing,
 }: {
 	wordBuffer: string[];
-	lastConfirmedAt: number | null;
+	handsGoneSince: number | null;
 	isComposing: boolean;
 }) {
-	const pending = wordBuffer.length > 0 && !isComposing && lastConfirmedAt !== null;
-	const [now, setNow] = useState(() => Date.now());
+	const pending = wordBuffer.length > 0 && !isComposing && handsGoneSince !== null;
+	// handsGoneSince is a performance.now() timestamp (see use-sign-capture.ts), so this must
+	// tick on the same clock -- Date.now() would produce a nonsense diff.
+	const [now, setNow] = useState(() => performance.now());
 
 	useEffect(() => {
 		if (!pending) return;
-		const id = setInterval(() => setNow(Date.now()), 200);
+		const id = setInterval(() => setNow(performance.now()), 200);
 		return () => clearInterval(id);
 	}, [pending]);
 
-	if (!pending || lastConfirmedAt === null) return null;
+	if (!pending || handsGoneSince === null) return null;
 
-	const remainingMs = UTTERANCE_PAUSE_MS - (now - lastConfirmedAt);
+	const remainingMs = HANDS_GONE_FLUSH_MS - (now - handsGoneSince);
 	if (remainingMs <= 0) return null;
 
 	return (
 		<p className="text-[11px] text-neutral-400">
-			{Math.ceil(remainingMs / 1000)}초간 더 동작이 없으면 "{wordBuffer.join(" ")}"를 문장으로
+			손이 {Math.ceil(remainingMs / 1000)}초간 더 안 보이면 "{wordBuffer.join(" ")}"를 문장으로
 			번역합니다.
 		</p>
 	);
@@ -498,12 +502,12 @@ export function SignCaptureView({
 		isArmDetected,
 		isComposing,
 		activeSign,
-		lastConfirmedSign,
 		recentSigns,
 		wordBuffer,
 		composedSentences,
 		references,
 		recognitionDebug,
+		handsGoneSince,
 		isRecordingWord,
 		recordingSecond,
 		recordingTotalSeconds,
@@ -616,7 +620,7 @@ export function SignCaptureView({
 			{/* When the buffered words will be sent off for translation */}
 			<UtteranceCountdown
 				wordBuffer={wordBuffer}
-				lastConfirmedAt={lastConfirmedSign?.timestamp ?? null}
+				handsGoneSince={handsGoneSince}
 				isComposing={isComposing}
 			/>
 
