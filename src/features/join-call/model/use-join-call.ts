@@ -86,7 +86,7 @@ export function useJoinCall() {
 		heartbeatRef.current = undefined;
 	};
 
-	const markRejected = (bySelf = false, ended = false) => {
+	const markRejected = (bySelf = false, ended = false, endedRoom: Room | null = null) => {
 		setRejectedBySelf(bySelf);
 		generationRef.current += 1;
 		manualLeaveRef.current = true;
@@ -95,10 +95,12 @@ export function useJoinCall() {
 		stateRef.current.room?.disconnect();
 		// CallPage only renders CallRoom's "ended" screen while `room` is still set (see
 		// the statusQuery effect below, which does the same) -- nulling it here would fall
-		// back to a blank JoinCall screen instead.
+		// back to a blank JoinCall screen instead. `endedRoom` covers the retry-loop path,
+		// where the room already got nulled out of state before the "ended" status was
+		// confirmed (see retryLoop).
 		updateState((current) => ({
 			...current,
-			room: ended ? current.room : null,
+			room: ended ? (endedRoom ?? current.room) : null,
 			status: ended ? "ended" : "rejected",
 		}));
 	};
@@ -184,6 +186,12 @@ export function useJoinCall() {
 		const callId = stateRef.current.callId;
 		if (!isCurrent(generation) || !params || !callId) return;
 
+		// Capture the about-to-be-cleared room before nulling it out below, so that if this
+		// reconnect attempt turns out to be a real call-end (not just a network blip), the
+		// "ended" screen still has a room to render against instead of falling back to a
+		// blank JoinCall screen.
+		const previousRoom = stateRef.current.room;
+
 		// Check whether the call already ended server-side (the other side hung up)
 		// before showing a "reconnecting" UI -- a dropped LiveKit connection after the
 		// other party ends the call looks identical to a network blip otherwise, and
@@ -191,7 +199,7 @@ export function useJoinCall() {
 		try {
 			const result = await getCallStatus(callId, params.participantKey);
 			if (result.status === "REJECTED" || result.status === "ENDED") {
-				markRejected(false, wasConnected);
+				markRejected(false, wasConnected, previousRoom);
 				return;
 			}
 		} catch {
@@ -202,7 +210,7 @@ export function useJoinCall() {
 		updateState((current) => ({ ...current, room: null, status: "reconnecting" }));
 
 		for (let attempt = 0; attempt < MAX_RETRIES && isCurrent(generation); attempt += 1) {
-			const result = await retryOnce(params, callId, generation, wasConnected);
+			const result = await retryOnce(params, callId, generation, wasConnected, previousRoom);
 			if (result === "connected" || result === "terminal" || result === "stale") return;
 			if (result === "fatal") break;
 		}
@@ -217,13 +225,14 @@ export function useJoinCall() {
 		callId: string,
 		generation: number,
 		wasConnected: boolean,
+		previousRoom: Room | null,
 	): Promise<"connected" | "terminal" | "retry" | "stale" | "fatal"> {
 		await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
 		if (!isCurrent(generation)) return "stale";
 		try {
 			const result = await getCallStatus(callId, params.participantKey);
 			if (result.status === "REJECTED" || result.status === "ENDED") {
-				markRejected(false, wasConnected);
+				markRejected(false, wasConnected, previousRoom);
 				return "terminal";
 			}
 			if (!hasLiveKitCredentials(result)) return "retry";
