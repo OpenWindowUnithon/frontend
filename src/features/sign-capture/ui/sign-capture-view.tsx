@@ -16,17 +16,22 @@ import {
 	Trash2,
 	User,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CaptionType } from "@/entities/caption";
 import { Button, Input } from "@/shared/ui";
-import { KSL_WORD_METADATA } from "../model/sign-model";
+import { DEFAULT_DTW_THRESHOLD } from "../model/dtw";
 import type { RecognizedSign } from "../model/types";
-import { useSignCapture } from "../model/use-sign-capture";
+import {
+	HANDS_GONE_FLUSH_MS,
+	type RecognitionDebug,
+	useSignCapture,
+} from "../model/use-sign-capture";
+import { KSL_WORD_METADATA } from "../model/word-metadata";
 
-// Only the real, sequence-trained KSL words -- the guide used to also list a handful of
-// single-frame static gestures (thumbs up, OK sign, finger-counted numbers), but that
-// recognizer was removed (see use-sign-capture.ts's docstring), so listing them here
-// would promise something that no longer works.
+// Suggested starter vocabulary for the guide -- recognition is DTW-only now, so none of these
+// (or any word) are recognized until the signer actually records them via the "고급: 나만의
+// 수어 단어 등록" flow. This list is just icons/descriptions to help someone decide what to
+// record first, not a promise that these already work.
 const KSL_VOCABULARY_LIST = Object.entries(KSL_WORD_METADATA).map(([label, meta]) => ({
 	label,
 	icon: meta.icon,
@@ -58,7 +63,7 @@ function CameraStatusBar({
 			{isModelReady && isCameraActive && (
 				<span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-0.5 font-medium text-emerald-300 text-xs backdrop-blur-md whitespace-nowrap">
 					<Sparkles className="h-3 w-3" />
-					하이브리드 AI
+					동작 인식 준비됨
 				</span>
 			)}
 
@@ -91,92 +96,124 @@ function CameraStatusBar({
 	);
 }
 
-function ActiveSignOverlay({
-	activeSign,
-	wordBuffer,
-	isComposing,
-}: {
-	activeSign: RecognizedSign | null;
-	wordBuffer: string[];
-	isComposing: boolean;
-}) {
-	// Caption-style accumulated words ("날씨 맛있다"), not chips -- the live single-word
-	// indicator (below) is a separate, smaller strip so it no longer blocks the caption once
-	// a second word starts accumulating.
-	const caption = wordBuffer.length > 0 ? wordBuffer.join(" ") : null;
+// Live single-word recognition indicator -- a compact badge, not the full accumulated
+// caption (the translated-sentence list below now covers that role), just enough to
+// confirm recognition is actually running while signing.
+function ActiveSignBadge({ activeSign }: { activeSign: RecognizedSign | null }) {
+	if (!activeSign) return null;
 
 	return (
-		<div className="flex w-full flex-col items-center gap-1.5">
-			{activeSign && (
-				<div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-black/70 px-3 py-1 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
-					<span className="text-base">{activeSign.icon}</span>
-					<span className="font-semibold">{activeSign.label}</span>
-					<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-						{Math.round(activeSign.confidence * 100)}%
-					</span>
-					<span className="flex items-center gap-1 font-medium text-emerald-400">
-						<CheckCircle2 className="h-3 w-3" />
-						인식 중
-					</span>
-				</div>
-			)}
-
-			{caption ? (
-				<div className="flex w-full items-center gap-2 rounded-2xl border border-blue-500/40 bg-black/85 px-4 py-3 text-white shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95">
-					{isComposing ? (
-						<Activity className="h-4 w-4 shrink-0 animate-spin text-amber-400" />
-					) : (
-						<Sparkles className="h-4 w-4 shrink-0 text-blue-400" />
-					)}
-					<span className="font-bold text-lg leading-snug">{caption}</span>
-				</div>
-			) : (
-				!activeSign && (
-					<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
-						<Hand className="h-3.5 w-3.5 text-neutral-400" />
-						<span>수어 동작이나 제스처를 취하면 실시간으로 인식되고 문장으로 합성됩니다</span>
-					</div>
-				)
-			)}
+		<div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-black/70 px-3 py-1 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
+			<span className="text-base">{activeSign.icon}</span>
+			<span className="font-semibold">{activeSign.label}</span>
+			<span className="flex items-center gap-1 font-medium text-emerald-400">
+				<CheckCircle2 className="h-3 w-3" />
+				인식 중
+			</span>
 		</div>
 	);
 }
 
-function SentenceResultBanner({
-	composedSentence,
-	isComposing,
-}: {
-	composedSentence: string | null;
-	isComposing: boolean;
-}) {
-	if (!composedSentence && !isComposing) return null;
+// Always-on technical readout of what the recognizer is actually seeing -- the closest DTW
+// reference (even above threshold, so a near-miss custom word is visible instead of the
+// recognizer just looking silently broken).
+function RecognitionDebugStrip({ debug }: { debug: RecognitionDebug | null }) {
+	if (!debug) return null;
+
+	const dtwText = debug.dtwWord
+		? `${debug.dtwWord} · 거리 ${debug.dtwDistance?.toFixed(2)} / 임계값 ${DEFAULT_DTW_THRESHOLD}`
+		: "저장된 커스텀 단어 없음";
 
 	return (
-		<div className="flex w-full items-center justify-between rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-3.5 text-emerald-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
-			<div className="flex items-center gap-3">
-				<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300">
+		<div className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-neutral-800 bg-neutral-900/60 px-3 py-1.5 font-mono text-[11px] text-neutral-400">
+			<span>DTW 최근접: {dtwText}</span>
+		</div>
+	);
+}
+
+// Ticks locally (display-only) so the signer knows exactly how much longer their hands can
+// stay out of frame before the buffered words get sent off for translation -- the utterance
+// ends when both hands have been gone for HANDS_GONE_FLUSH_MS, not after a pause since the
+// last confirmed word.
+function UtteranceCountdown({
+	wordBuffer,
+	handsGoneSince,
+	isComposing,
+}: {
+	wordBuffer: string[];
+	handsGoneSince: number | null;
+	isComposing: boolean;
+}) {
+	const pending = wordBuffer.length > 0 && !isComposing && handsGoneSince !== null;
+	// handsGoneSince is a performance.now() timestamp (see use-sign-capture.ts), so this must
+	// tick on the same clock -- Date.now() would produce a nonsense diff.
+	const [now, setNow] = useState(() => performance.now());
+
+	useEffect(() => {
+		if (!pending) return;
+		const id = setInterval(() => setNow(performance.now()), 200);
+		return () => clearInterval(id);
+	}, [pending]);
+
+	if (!pending || handsGoneSince === null) return null;
+
+	const remainingMs = HANDS_GONE_FLUSH_MS - (now - handsGoneSince);
+	if (remainingMs <= 0) return null;
+
+	return (
+		<p className="text-[11px] text-neutral-400">
+			손이 {Math.ceil(remainingMs / 1000)}초간 더 안 보이면 "{wordBuffer.join(" ")}"를 문장으로
+			번역합니다.
+		</p>
+	);
+}
+
+const MAX_SHOWN_SENTENCES = 5;
+
+// Rolling log of translated sentences (newest first) rather than a single line that gets
+// replaced -- translation keeps firing for every utterance, and showing only the latest one
+// made it look like it only ever ran once.
+function SentenceResultBanner({
+	composedSentences,
+	isComposing,
+}: {
+	composedSentences: string[];
+	isComposing: boolean;
+}) {
+	if (composedSentences.length === 0 && !isComposing) return null;
+
+	const recent = composedSentences
+		.map((sentence, index) => ({ sentence, index }))
+		.slice(-MAX_SHOWN_SENTENCES)
+		.reverse();
+
+	return (
+		<div className="flex w-full flex-col gap-2.5 rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-3.5 text-emerald-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
+			<div className="flex items-center gap-2">
+				<div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300">
 					{isComposing ? (
 						<Activity className="h-4 w-4 animate-spin" />
 					) : (
 						<Bot className="h-4 w-4" />
 					)}
 				</div>
-				<div>
-					<div className="flex items-center gap-2">
-						<span className="font-semibold text-emerald-400 text-xs">
-							{isComposing ? "LLM 자연어 문장 변환 중..." : "AI 실시간 번역 문장"}
-						</span>
-					</div>
-					<p className="mt-0.5 font-bold text-sm text-white">
-						{composedSentence ?? "단어들을 자연스러운 문장으로 조합하고 있습니다..."}
-					</p>
-				</div>
-			</div>
-			{!isComposing && (
-				<span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 font-medium text-[11px] text-emerald-300">
-					음성 발화 완료
+				<span className="font-semibold text-emerald-400 text-xs">
+					{isComposing ? "LLM 자연어 문장 변환 중..." : "AI 실시간 번역 문장"}
 				</span>
-			)}
+			</div>
+			<div className="flex flex-col gap-1.5 pl-1">
+				{isComposing && recent.length === 0 && (
+					<p className="text-sm text-white/70">단어들을 자연스러운 문장으로 조합하고 있습니다...</p>
+				)}
+				{recent.map(({ sentence, index }, i) => (
+					<p
+						key={index}
+						className={i === 0 ? "font-bold text-sm text-white" : "text-emerald-200/60 text-xs"}
+					>
+						{sentence}
+					</p>
+				))}
+			</div>
 		</div>
 	);
 }
@@ -250,26 +287,43 @@ function RecentSignsHistory({
 
 function CustomWordRecorder({
 	references,
-	onRecord,
+	isRecording,
+	isSaving,
+	recordingSecond,
+	recordingTotalSeconds,
+	recordingTotalReps,
+	recordingRepIntervalSeconds,
+	recordingResult,
+	onStartRecording,
+	onFinishNow,
+	onCancelRecording,
 	onRemove,
 }: {
 	references: Record<string, number>;
-	onRecord: (word: string) => boolean;
+	isRecording: boolean;
+	isSaving: boolean;
+	recordingSecond: number;
+	recordingTotalSeconds: number;
+	recordingTotalReps: number;
+	recordingRepIntervalSeconds: number;
+	recordingResult: { ok: boolean; message: string } | null;
+	onStartRecording: (word: string) => boolean;
+	onFinishNow: () => void;
+	onCancelRecording: () => void;
 	onRemove: (word: string) => void;
 }) {
+	// recordingSecond is elapsed whole seconds (1..recordingTotalSeconds); derive which rep
+	// beat that falls into so the cadence bar shows reps, not raw seconds.
+	const currentRep = Math.min(
+		recordingTotalReps,
+		Math.floor((recordingSecond - 1) / recordingRepIntervalSeconds) + 1,
+	);
 	const [newWord, setNewWord] = useState("");
-	const [recordHint, setRecordHint] = useState<string | null>(null);
 
-	const handleRecord = () => {
+	const handleStart = () => {
 		const word = newWord.trim();
 		if (!word) return;
-		const ok = onRecord(word);
-		if (ok) {
-			setRecordHint(`'${word}' 동작 샘플을 저장했습니다.`);
-			setNewWord("");
-		} else {
-			setRecordHint("카메라 프레임이 충분히 모이지 않았습니다. 잠시 후 다시 눌러주세요.");
-		}
+		onStartRecording(word);
 	};
 
 	return (
@@ -280,27 +334,93 @@ function CustomWordRecorder({
 			</summary>
 			<div className="flex flex-col gap-2.5 pt-3">
 				<p className="text-neutral-400 text-xs leading-relaxed">
-					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 표현한 뒤 "이 동작 저장"을
-					누르면, 브라우저가 기억하여 다음부터 인식합니다.
+					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 등록해보세요. "학습 시작"을 누르면{" "}
+					{recordingTotalSeconds}초 동안 {recordingRepIntervalSeconds}초에 한 번씩 그 단어의 동작을
+					반복해주시면(총 {recordingTotalReps}번) 자동으로 나눠서 저장합니다. 등록한 단어는 모든
+					사용자에게 공유됩니다.
 				</p>
-				<div className="flex gap-2">
+				<div className="flex items-center gap-2">
 					<Input
 						placeholder="단어 이름 (예: 병원)"
 						value={newWord}
 						onChange={(e) => setNewWord(e.target.value)}
+						disabled={isRecording || isSaving}
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
-					<Button
-						size="sm"
-						disabled={!newWord.trim()}
-						onClick={handleRecord}
-						className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
-					>
-						<Plus className="h-3.5 w-3.5" />
-						동작 저장
-					</Button>
+					{isRecording ? (
+						<>
+							<Button
+								size="sm"
+								onClick={onFinishNow}
+								className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
+							>
+								완료(지금까지 저장)
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={onCancelRecording}
+								className="shrink-0 gap-1 border-red-500/40 text-red-300 hover:bg-red-500/10"
+							>
+								취소(저장 안 함)
+							</Button>
+						</>
+					) : (
+						<Button
+							size="sm"
+							disabled={!newWord.trim() || isSaving}
+							onClick={handleStart}
+							className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
+						>
+							<Plus className="h-3.5 w-3.5" />
+							{isSaving ? "저장 중..." : "학습 시작"}
+						</Button>
+					)}
 				</div>
-				{recordHint && <p className="font-medium text-amber-300 text-xs">{recordHint}</p>}
+
+				{isRecording && (
+					<div className="flex flex-col gap-1.5">
+						<div className="flex items-center justify-between text-xs">
+							<span className="font-medium text-blue-300">
+								{recordingRepIntervalSeconds}초에 한 번씩 동작을 반복해주세요
+							</span>
+							<span className="font-mono text-blue-300/70 tabular-nums">
+								{currentRep}/{recordingTotalReps}
+							</span>
+						</div>
+						{/* Cadence bar: one segment per rep (not per second) -- the current beat
+						    pulses as the cue for "repeat the gesture now" rather than making the
+						    signer read and do math on a raw seconds counter. */}
+						<div className="flex gap-1">
+							{Array.from({ length: recordingTotalReps }, (_, i) => {
+								const isPast = i < currentRep - 1;
+								const isCurrentBeat = i === currentRep - 1;
+								return (
+									<div
+										// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length beat display, never reordered
+										key={i}
+										className={`h-2 flex-1 rounded-full transition-colors ${
+											isPast || isCurrentBeat ? "bg-blue-400" : "bg-neutral-700"
+										} ${isCurrentBeat ? "animate-pulse" : ""}`}
+									/>
+								);
+							})}
+						</div>
+						<p className="text-[11px] text-neutral-500">
+							반복이 끝났다면 {recordingTotalSeconds}초를 다 기다리지 않고 "완료(지금까지 저장)"를
+							눌러도 그때까지 녹화된 반복이 저장됩니다.
+						</p>
+					</div>
+				)}
+
+				{!isRecording && recordingResult && (
+					<p
+						className={`font-medium text-xs ${recordingResult.ok ? "text-emerald-300" : "text-amber-300"}`}
+					>
+						{recordingResult.message}
+					</p>
+				)}
+
 				{Object.keys(references).length > 0 && (
 					<ul className="mt-1 flex flex-col gap-1 border-neutral-800 border-t pt-2">
 						{Object.entries(references).map(([word, count]) => (
@@ -311,7 +431,8 @@ function CustomWordRecorder({
 								<button
 									type="button"
 									onClick={() => onRemove(word)}
-									className="flex items-center gap-1 text-red-400 hover:text-red-300"
+									disabled={isRecording || isSaving}
+									className="flex items-center gap-1 text-red-400 hover:text-red-300 disabled:opacity-40"
 								>
 									<Trash2 className="h-3 w-3" />
 									삭제
@@ -331,7 +452,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 			<div className="mb-3 flex items-center justify-between border-neutral-800 border-b pb-2">
 				<h5 className="flex items-center gap-2 font-semibold text-sm text-white">
 					<Sparkles className="h-4 w-4 text-blue-400" />
-					지원하는 한국수어(KSL) 단어
+					추천 시작 단어 (아래에서 직접 녹화해야 인식됩니다)
 				</h5>
 				<button
 					type="button"
@@ -361,7 +482,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 
 /**
  * Camera preview for the signer — runs Hand & Pose Landmarker locally, recognizing signs from
- * the 30-frame sequence window (LSTM + DTW).
+ * the 30-frame sequence window via DTW matching against signer-recorded words.
  *
  * `compact` drops the dev-tooling panels (recognition history, custom DTW word recorder,
  * vocabulary guide, sentence banner) meant for the standalone camera test page — used when
@@ -401,12 +522,23 @@ export function SignCaptureView({
 		activeSign,
 		recentSigns,
 		wordBuffer,
-		composedSentence,
+		composedSentences,
 		references,
+		recognitionDebug,
+		handsGoneSince,
+		isRecordingWord,
+		isSavingReference,
+		recordingSecond,
+		recordingTotalSeconds,
+		recordingTotalReps,
+		recordingRepIntervalSeconds,
+		recordingResult,
 		toggleCamera,
 		toggleSkeleton,
 		clearHistory,
-		recordReference,
+		startRecordingReference,
+		finishRecordingNow,
+		cancelRecordingReference,
 		removeReference,
 	} = useSignCapture(room, captions, onSentence);
 
@@ -522,22 +654,28 @@ export function SignCaptureView({
 					<CameraDisabledState cameraError={cameraError} onRetry={toggleCamera} />
 				)}
 
-				{/* Bottom Active Recognized Sign HUD */}
+				{/* Live single-word recognition indicator */}
 				{isCameraActive && (
-					<div className="absolute right-3 bottom-3 left-3 flex flex-col items-center">
-						<ActiveSignOverlay
-							activeSign={activeSign}
-							wordBuffer={wordBuffer}
-							isComposing={isComposing}
-						/>
+					<div className="absolute right-3 bottom-3 left-3 flex justify-center">
+						<ActiveSignBadge activeSign={activeSign} />
 					</div>
 				)}
 			</div>
 
 			{!compact && (
 				<>
+					{/* Recognition Clarity: what DTW is actually seeing right now */}
+					<RecognitionDebugStrip debug={recognitionDebug} />
+
+					{/* When the buffered words will be sent off for translation */}
+					<UtteranceCountdown
+						wordBuffer={wordBuffer}
+						handsGoneSince={handsGoneSince}
+						isComposing={isComposing}
+					/>
+
 					{/* AI Translated Natural Sentence Banner */}
-					<SentenceResultBanner composedSentence={composedSentence} isComposing={isComposing} />
+					<SentenceResultBanner composedSentences={composedSentences} isComposing={isComposing} />
 
 					{/* Recognition History Log */}
 					<RecentSignsHistory recentSigns={recentSigns} onClear={clearHistory} />
@@ -545,7 +683,16 @@ export function SignCaptureView({
 					{/* Custom DTW Word Recording Component */}
 					<CustomWordRecorder
 						references={references}
-						onRecord={recordReference}
+						isRecording={isRecordingWord}
+						isSaving={isSavingReference}
+						recordingSecond={recordingSecond}
+						recordingTotalSeconds={recordingTotalSeconds}
+						recordingTotalReps={recordingTotalReps}
+						recordingRepIntervalSeconds={recordingRepIntervalSeconds}
+						recordingResult={recordingResult}
+						onStartRecording={startRecordingReference}
+						onFinishNow={finishRecordingNow}
+						onCancelRecording={cancelRecordingReference}
 						onRemove={removeReference}
 					/>
 
