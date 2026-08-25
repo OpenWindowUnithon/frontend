@@ -235,7 +235,7 @@ function CustomWordRecorder({
 					{recordingTotalSeconds}초 동안 1초에 한 번씩 그 단어의 동작을 반복해주시면 자동으로 나눠서
 					저장합니다.
 				</p>
-				<div className="flex gap-2">
+				<div className="flex items-center gap-2">
 					<Input
 						placeholder="단어 이름 (예: 병원)"
 						value={newWord}
@@ -243,6 +243,11 @@ function CustomWordRecorder({
 						disabled={isRecording}
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
+					{isRecording && (
+						<span className="flex h-9 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 font-mono font-semibold text-blue-300 text-xs tabular-nums">
+							{recordingSecond}/{recordingTotalSeconds}초
+						</span>
+					)}
 					{isRecording ? (
 						<Button
 							size="sm"
@@ -266,22 +271,10 @@ function CustomWordRecorder({
 				</div>
 
 				{isRecording && (
-					<div className="flex flex-col gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 p-2.5">
-						<span className="font-semibold text-blue-300 text-xs">
-							{recordingSecond}초 / {recordingTotalSeconds}초 — 1초에 한 번씩 동작을 반복해주세요
-						</span>
-						<div className="flex gap-1">
-							{Array.from({ length: recordingTotalSeconds }, (_, i) => (
-								<div
-									// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length tick display, never reordered
-									key={i}
-									className={`h-1.5 flex-1 rounded-full transition-colors ${
-										i < recordingSecond ? "bg-blue-400" : "bg-neutral-700"
-									}`}
-								/>
-							))}
-						</div>
-					</div>
+					<p className="font-medium text-blue-300 text-xs">
+						1초에 한 번씩 동작을 반복해주세요 — {recordingTotalSeconds}초가 지나면 자동으로
+						학습됩니다.
+					</p>
 				)}
 
 				{!isRecording && recordingResult && (
