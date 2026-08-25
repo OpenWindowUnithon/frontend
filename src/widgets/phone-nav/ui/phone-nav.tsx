@@ -1,4 +1,4 @@
-import { IconClockFill, IconPersonFill } from "@karrotmarket/react-monochrome-icon";
+import { IconClockFill, IconPersonFill, IconPhoneFill } from "@karrotmarket/react-monochrome-icon";
 import { Link } from "@tanstack/react-router";
 
 export function PhoneNav({ current }: { current: "recent" | "keypad" | "profile" }) {
@@ -14,9 +14,7 @@ export function PhoneNav({ current }: { current: "recent" | "keypad" | "profile"
 				최근 통화
 			</Link>
 			<Link to="/" className={itemClass(current === "keypad")}>
-				<span className="grid size-6 place-items-center text-base font-bold" aria-hidden>
-					•••
-				</span>
+				<IconPhoneFill className="size-6" aria-hidden />
 				키패드
 			</Link>
 			<Link to="/my" className={itemClass(current === "profile")}>

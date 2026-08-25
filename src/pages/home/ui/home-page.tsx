@@ -233,13 +233,15 @@ export function HomePage() {
 							aria-label={number}
 						>
 							<span
-								className={`flex h-[38px] items-center justify-center text-[1.9rem] leading-none font-normal tabular-nums ${number === "*" ? "translate-y-1" : ""}`}
+								className={`flex items-center justify-center text-[1.9rem] leading-none font-normal tabular-nums ${number === "*" || number === "#" ? "row-span-2 h-full" : "h-[38px]"}`}
 							>
 								{number}
 							</span>
-							<span className="h-3 whitespace-nowrap text-[0.58rem] leading-3 font-semibold tracking-[0.14em]">
-								{letters}
-							</span>
+							{number !== "*" && number !== "#" && (
+								<span className="h-3 whitespace-nowrap text-[0.58rem] leading-3 font-semibold tracking-[0.14em]">
+									{letters}
+								</span>
+							)}
 						</button>
 					))}
 				</div>
