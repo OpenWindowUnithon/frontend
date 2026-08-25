@@ -83,11 +83,12 @@ const NO_SIGN_STREAK_TO_RESET = 10;
 // If both hands haven't been detected for this long, treat it as the end of the signer's
 // turn and send whatever's been confirmed so far off for translation. Replaces a
 // pause-since-last-confirmed-word debounce, which didn't distinguish "hands down, done
-// signing" from "hands still up, just pausing mid-sentence." Needs to comfortably clear a
-// normal thinking/breathing pause between words in one sentence -- too short here means a
-// mid-sentence pause gets treated as sentence-end, splitting one utterance into several
-// fragments that each get sent to the LLM and end up saying overlapping/similar things.
-export const HANDS_GONE_FLUSH_MS = 3000;
+// signing" from "hands still up, just pausing mid-sentence." The repeated-sentence bug this
+// was once bumped up to work around (575e847..7ed7a64) was actually caused by unconditional
+// DTW confirmation and stale recognition state surviving a flush, not by this being too
+// short -- both are fixed now (see resolvePrediction's threshold gate and sendUtteranceNow's
+// reset), so this stays short for a responsive turn-taking feel.
+export const HANDS_GONE_FLUSH_MS = 1500;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
 // How many past translated sentences to keep around for display -- translation keeps
