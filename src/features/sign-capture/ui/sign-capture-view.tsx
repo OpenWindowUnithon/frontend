@@ -106,9 +106,6 @@ function ActiveSignBadge({ activeSign }: { activeSign: RecognizedSign | null }) 
 		<div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-black/70 px-3 py-1 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
 			<span className="text-base">{activeSign.icon}</span>
 			<span className="font-semibold">{activeSign.label}</span>
-			<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-				{Math.round(activeSign.confidence * 100)}%
-			</span>
 			<span className="flex items-center gap-1 font-medium text-emerald-400">
 				<CheckCircle2 className="h-3 w-3" />
 				인식 중

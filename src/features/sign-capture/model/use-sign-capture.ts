@@ -99,10 +99,8 @@ const RECORD_TOTAL_SECONDS = RECORD_REPS * REP_INTERVAL_SECONDS;
 const MIN_SEGMENT_FRAMES = 5;
 
 interface ResolvedPrediction {
-	finalCandidate: string | null;
-	finalConfidence: number;
-	closestWord: string | null;
-	closestSimilarity: number;
+	candidate: string | null;
+	confidence: number;
 	debug: RecognitionDebug;
 }
 
@@ -116,26 +114,19 @@ interface ResolvedPrediction {
 // becomes fully predictable: whatever you record is what gets recognized. Packages a debug
 // snapshot alongside the result -- pulled out of handleLandmarkerResult to keep that
 // callback's cognitive complexity down.
+//
+// Unconditional: whichever registered word is closest is the candidate, with no distance
+// threshold gating confirmation -- once at least one word is registered there's no "nothing
+// recognized" state (only handleLandmarkerResult's hands-not-detected check produces a null
+// candidate). DEFAULT_DTW_THRESHOLD is used only to scale the debug/display similarity
+// percentage, not to accept or reject a match.
 function resolvePrediction(frames: number[][]): ResolvedPrediction {
-	// Always compute the closest DTW reference (even above threshold) so the debug readout
-	// and the live "인식 중" card can show it -- otherwise a near-miss custom word is
-	// invisible to the user instead of showing "this is what it thinks you're doing, just
-	// not confidently enough."
 	const dtwBest = closestReference(frames);
-	// Only a match under threshold actually confirms a word into the sentence buffer --
-	// showing every closest guess as a live card is fine (it's just a hint), but sending
-	// every closest guess to the LLM as a "recognized word" would wreck translation quality.
-	const dtwMatch = dtwBest && dtwBest.distance <= DEFAULT_DTW_THRESHOLD ? dtwBest : null;
-	// DTW has no natural 0-1 similarity -- derive one from how close the distance is to the
-	// threshold. Computed for the closest match regardless of whether it clears the
-	// threshold, so it can drive the always-shown card.
 	const similarity = dtwBest ? Math.max(0, 1 - dtwBest.distance / DEFAULT_DTW_THRESHOLD) : 0;
 
 	return {
-		finalCandidate: dtwMatch?.word ?? null,
-		finalConfidence: similarity,
-		closestWord: dtwBest?.word ?? null,
-		closestSimilarity: similarity,
+		candidate: dtwBest?.word ?? null,
+		confidence: similarity,
 		debug: {
 			dtwWord: dtwBest?.word ?? null,
 			dtwDistance: dtwBest?.distance ?? null,
@@ -544,18 +535,28 @@ export function useSignCapture(
 			// word buffer/LLM compose flow with junk from the practice reps.
 			if (recordingWordRef.current) return;
 
+			// No hands in frame means no gesture is happening -- skip DTW lookup entirely
+			// rather than matching a zero-filled hand vector against whatever's registered
+			// (which, since confirmation is unconditional, would otherwise keep confirming
+			// some "closest" word even with nobody signing).
+			if (hands.length === 0) {
+				setActiveSign(null);
+				handleKslPrediction(null, 0);
+				return;
+			}
+
 			const frames = windowRef.current.toArray();
 			if (!frames) return;
 
-			const { finalCandidate, finalConfidence, closestWord, closestSimilarity, debug } =
-				resolvePrediction(frames);
+			const { candidate, confidence, debug } = resolvePrediction(frames);
 			setRecognitionDebug(debug);
 			// Always show the closest match as a live card, however low the similarity -- lets
-			// the signer see "this is what it thinks you're doing" even when it isn't
-			// confident enough to confirm the word into the sentence.
-			setActiveSign(buildActiveSignFromClosest(closestWord, closestSimilarity));
+			// the signer see "this is what it thinks you're doing." Confirmation into the
+			// sentence buffer is unconditional too (see resolvePrediction), so this is also
+			// exactly what's about to be added to the word list.
+			setActiveSign(buildActiveSignFromClosest(candidate, confidence));
 
-			handleKslPrediction(finalCandidate, finalConfidence);
+			handleKslPrediction(candidate, confidence);
 		},
 		[showSkeleton, handleKslPrediction, updateHandsGoneTracking],
 	);

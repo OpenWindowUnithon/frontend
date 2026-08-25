@@ -28,8 +28,8 @@ export function TestCameraPage() {
 					<div className="flex items-center gap-2">
 						<Sparkles className="h-4 w-4 shrink-0 text-blue-400" />
 						<span>
-							통화 연결 없이 실시간 웹캠 관절 추적, KSL 수어 인식, DTW 커스텀 단어 등록을 테스트할
-							수 있습니다.
+							통화 연결 없이 실시간 웹캠 관절 추적, 단어 등록(DTW), 등록한 단어가 문장으로 잘
+							번역되는지를 테스트할 수 있습니다.
 						</span>
 					</div>
 				</div>
