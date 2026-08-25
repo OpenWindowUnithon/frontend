@@ -84,7 +84,7 @@ export function ProfilePage() {
 					value={formatPhone(normalized)}
 					onValueChange={({ value }) => setPhone(value.replace(/\D/g, "").slice(0, 11))}
 				>
-					<TextFieldInput id="my-phone" inputMode="tel" placeholder="010 1234 5678" />
+					<TextFieldInput id="my-phone" inputMode="tel" />
 				</TextField>
 				<ActionButton
 					className="mt-4 w-full"
