@@ -99,10 +99,15 @@ interface ResolvedPrediction {
 	debug: RecognitionDebug;
 }
 
-// Combines the LSTM's per-frame classification with the closest DTW reference match (LSTM
-// wins when confident, DTW is the fallback for custom words) and packages a debug snapshot
-// alongside it -- pulled out of handleLandmarkerResult's predictSign callback to keep that
-// callback's cognitive complexity down.
+// Combines the LSTM's per-frame classification with the closest DTW reference match --
+// DTW wins whenever a custom word matches, LSTM is the fallback for the 11 base words. A
+// registered custom word is a deliberate, user-trained signal; the base LSTM model was
+// previously checked first and, since it always emits *some* top-1 guess (softmax over 12
+// classes, including "no action"), it routinely produced a confident-enough guess for
+// arbitrary hand motion and permanently shadowed DTW candidates -- a custom word could match
+// perfectly and still never win. Packages a debug snapshot alongside the result -- pulled out
+// of handleLandmarkerResult's predictSign callback to keep that callback's cognitive
+// complexity down.
 function resolvePrediction(
 	frames: number[][],
 	label: string | null,
@@ -120,9 +125,9 @@ function resolvePrediction(
 	const dtwConfidence = dtwMatch ? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD) : 0;
 
 	return {
-		finalCandidate: lstmCandidate ?? dtwMatch?.word ?? null,
-		finalConfidence: lstmCandidate ? confidence : dtwConfidence,
-		isDtw: !lstmCandidate,
+		finalCandidate: dtwMatch?.word ?? lstmCandidate ?? null,
+		finalConfidence: dtwMatch ? dtwConfidence : confidence,
+		isDtw: Boolean(dtwMatch),
 		debug: {
 			lstmLabel: label,
 			lstmConfidence: confidence,
