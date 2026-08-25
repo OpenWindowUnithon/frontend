@@ -75,7 +75,7 @@ const NO_SIGN_STREAK_TO_RESET = 5;
 // turn and send whatever's been confirmed so far off for translation. Replaces a
 // pause-since-last-confirmed-word debounce, which didn't distinguish "hands down, done
 // signing" from "hands still up, just pausing mid-sentence."
-export const HANDS_GONE_FLUSH_MS = 3000;
+export const HANDS_GONE_FLUSH_MS = 1500;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
 // How many past translated sentences to keep around for display -- translation keeps
