@@ -2,6 +2,8 @@ import { IconBackspacekeyFill, IconPhoneFill } from "@karrotmarket/react-monochr
 import { Icon } from "@seed-design/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import axios from "axios";
+import { hapticTrigger } from "ios-haptics";
 import { useEffect, useState } from "react";
 import {
 	createOutgoingCall,
@@ -10,8 +12,10 @@ import {
 	getIncomingCall,
 	getMyPhone,
 	registerPhone,
+	setMyPhone,
 } from "@/entities/call";
 import { setSessionKey } from "@/features/join-call";
+import { snackbar } from "@/shared/lib";
 import { ActionButton } from "@/shared/ui";
 import { PhoneNav } from "@/widgets/phone-nav";
 
@@ -30,16 +34,61 @@ const KEYS = [
 	["#", ""],
 ] as const;
 
+const DTMF_FREQUENCIES: Record<(typeof KEYS)[number][0], readonly [number, number]> = {
+	"1": [697, 1209],
+	"2": [697, 1336],
+	"3": [697, 1477],
+	"4": [770, 1209],
+	"5": [770, 1336],
+	"6": [770, 1477],
+	"7": [852, 1209],
+	"8": [852, 1336],
+	"9": [852, 1477],
+	"*": [941, 1209],
+	"0": [941, 1336],
+	"#": [941, 1477],
+};
+
+let keypadAudioContext: AudioContext | undefined;
+
+async function playKeypadTone(key: (typeof KEYS)[number][0]) {
+	try {
+		keypadAudioContext ??= new AudioContext();
+		if (keypadAudioContext.state === "suspended") await keypadAudioContext.resume();
+
+		const startedAt = keypadAudioContext.currentTime;
+		const gain = keypadAudioContext.createGain();
+		gain.gain.setValueAtTime(0.0001, startedAt);
+		gain.gain.exponentialRampToValueAtTime(0.08, startedAt + 0.01);
+		gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.18);
+		gain.connect(keypadAudioContext.destination);
+
+		for (const frequency of DTMF_FREQUENCIES[key]) {
+			const oscillator = keypadAudioContext.createOscillator();
+			oscillator.frequency.value = frequency;
+			oscillator.connect(gain);
+			oscillator.start(startedAt);
+			oscillator.stop(startedAt + 0.18);
+		}
+	} catch {
+		// Audio feedback is optional and must never block keypad input.
+	}
+}
+
 function formatPhoneNumber(value: string) {
 	if (value.length <= 3) return value;
 	if (value.length <= 7) return `${value.slice(0, 3)} ${value.slice(3)}`;
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
+function isPhoneOwnershipConflict(error: unknown) {
+	return axios.isAxiosError(error) && error.response?.status === 409;
+}
+
 export function HomePage() {
 	const navigate = useNavigate();
 	const [deviceKey] = useState(getDeviceKey);
-	const [myPhone] = useState(getMyPhone);
+	const [myPhone, setStoredPhone] = useState(getMyPhone);
 	const [digits, setDigits] = useState("");
 	const [communication] = useState(() => getCallPreferences().defaultCommunication);
 	const phone = formatPhoneNumber(digits);
@@ -49,6 +98,15 @@ export function HomePage() {
 
 	const registration = useMutation({
 		mutationFn: () => registerPhone(normalizedMyPhone, deviceKey),
+		onError: (error) => {
+			if (isPhoneOwnershipConflict(error)) {
+				setMyPhone("");
+				setStoredPhone("");
+				snackbar.error("저장된 전화번호가 다른 기기에 등록되어 초기화했어요.");
+				return;
+			}
+			snackbar.error("전화번호를 등록하지 못했어요.");
+		},
 	});
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restore the persisted identity only on mount
@@ -65,6 +123,10 @@ export function HomePage() {
 		staleTime: 0,
 		retry: 1,
 	});
+
+	useEffect(() => {
+		if (incoming.isError) snackbar.error("수신 전화를 확인하지 못했어요.");
+	}, [incoming.isError]);
 
 	useEffect(() => {
 		const call = incoming.data;
@@ -110,6 +172,15 @@ export function HomePage() {
 				},
 			});
 		},
+		onError: (error) => {
+			if (isPhoneOwnershipConflict(error)) {
+				setMyPhone("");
+				setStoredPhone("");
+				snackbar.error("저장된 전화번호가 다른 기기에 등록되어 초기화했어요.");
+				return;
+			}
+			snackbar.error("전화를 걸지 못했어요. 잠시 후 다시 시도해 주세요.");
+		},
 	});
 
 	const startCall = () => {
@@ -121,25 +192,26 @@ export function HomePage() {
 		outgoing.mutate();
 	};
 
+	const pressKey = (number: (typeof KEYS)[number][0]) => {
+		void playKeypadTone(number);
+		if (number === "*" || number === "#") return;
+		setDigits((current) => `${current}${number}`.slice(0, 11));
+	};
+
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
-			<header className="flex min-h-14 items-center justify-between py-3">
+		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
+			<header className="flex min-h-14 shrink-0 items-center justify-between pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
 				<h1 className="sr-only">전화 키패드</h1>
 				<div />
-				{(registration.isError || outgoing.isError || incoming.isError) && (
-					<p className="text-xs text-destructive" role="alert">
-						전화번호 등록 또는 연결을 확인해 주세요.
-					</p>
-				)}
 			</header>
 
-			<section className="flex flex-1 flex-col items-center justify-end pb-5">
+			<section className="flex min-h-0 flex-1 flex-col items-center justify-end overflow-y-auto pb-5">
 				<div
 					className="mt-4 flex min-h-24 w-full flex-col items-center justify-center"
 					aria-live="polite"
 				>
 					<p className="min-h-11 text-center text-4xl leading-11 font-light tracking-tight tabular-nums">
-						{phone || "전화번호 입력"}
+						{phone}
 					</p>
 				</div>
 
@@ -147,19 +219,27 @@ export function HomePage() {
 					{KEYS.map(([number, letters]) => (
 						<button
 							key={number}
+							ref={hapticTrigger}
 							type="button"
 							className="mx-auto grid size-[68px] touch-manipulation appearance-none grid-rows-[38px_12px] content-center place-items-center rounded-full border-0 bg-secondary p-0 text-foreground shadow-none transition select-none active:scale-95 active:bg-bg-neutral-weak-pressed"
-							onClick={() => setDigits((current) => `${current}${number}`.slice(0, 11))}
+							onPointerDown={(event) => {
+								if (event.button === 0) pressKey(number);
+							}}
+							onClick={(event) => {
+								if (event.detail === 0) pressKey(number);
+							}}
 							aria-label={number}
 						>
 							<span
-								className={`flex h-[38px] items-center justify-center text-[1.9rem] leading-none font-normal tabular-nums ${number === "*" ? "translate-y-1" : ""}`}
+								className={`flex items-center justify-center text-[1.9rem] leading-none font-normal tabular-nums ${number === "*" || number === "#" ? "row-span-2 h-full" : "h-[38px]"}`}
 							>
 								{number}
 							</span>
-							<span className="h-3 whitespace-nowrap text-[0.58rem] leading-3 font-semibold tracking-[0.14em]">
-								{letters}
-							</span>
+							{number !== "*" && number !== "#" && (
+								<span className="h-3 whitespace-nowrap text-[0.58rem] leading-3 font-semibold tracking-[0.14em]">
+									{letters}
+								</span>
+							)}
 						</button>
 					))}
 				</div>

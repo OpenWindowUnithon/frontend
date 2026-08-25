@@ -38,6 +38,8 @@
 	--color-secondary: var(--secondary);
 	--color-primary-foreground: var(--primary-foreground);
 	--color-primary: var(--primary);
+	--color-naru-connect: var(--naru-connect);
+	--color-naru-connect-weak: var(--naru-connect-weak);
 	--color-popover-foreground: var(--popover-foreground);
 	--color-popover: var(--popover);
 	--color-card-foreground: var(--card-foreground);
@@ -55,36 +57,55 @@
 
 :root,
 .dark {
+	/* NARU color guide mapped to the closest adaptive SEED palette colors. */
+	--naru-primary: var(--seed-color-palette-blue-700);
+	--naru-primary-pressed: var(--seed-color-palette-blue-800);
+	--naru-primary-contrast: var(--seed-color-palette-blue-900);
+	--naru-primary-weak: var(--seed-color-palette-blue-100);
+	--naru-primary-weak-pressed: var(--seed-color-palette-blue-200);
+	--naru-connect: var(--seed-color-palette-green-600);
+	--naru-connect-weak: var(--seed-color-palette-green-100);
+
+	/* Keep SEED components on semantic brand tokens while applying NARU's blue identity. */
+	--seed-color-fg-brand: var(--naru-primary);
+	--seed-color-fg-brand-contrast: var(--naru-primary-contrast);
+	--seed-color-bg-brand-solid: var(--naru-primary);
+	--seed-color-bg-brand-solid-pressed: var(--naru-primary-pressed);
+	--seed-color-bg-brand-weak: var(--naru-primary-weak);
+	--seed-color-bg-brand-weak-pressed: var(--naru-primary-weak-pressed);
+	--seed-color-stroke-brand-solid: var(--naru-primary);
+	--seed-color-stroke-brand-weak: var(--seed-color-palette-blue-300);
+
 	--background: var(--seed-color-bg-layer-basement);
 	--foreground: var(--seed-color-fg-neutral);
 	--card: var(--seed-color-bg-layer-default);
 	--card-foreground: var(--seed-color-fg-neutral);
 	--popover: var(--seed-color-bg-layer-floating);
 	--popover-foreground: var(--seed-color-fg-neutral);
-	--primary: var(--seed-color-bg-brand-solid);
+	--primary: var(--naru-primary);
 	--primary-foreground: var(--seed-color-fg-neutral-inverted);
 	--secondary: var(--seed-color-bg-neutral-weak);
 	--secondary-foreground: var(--seed-color-fg-neutral-muted);
 	--muted: var(--seed-color-bg-layer-fill);
 	--muted-foreground: var(--seed-color-fg-neutral-subtle);
-	--accent: var(--seed-color-bg-brand-weak);
-	--accent-foreground: var(--seed-color-fg-brand-contrast);
+	--accent: var(--naru-primary-weak);
+	--accent-foreground: var(--naru-primary-contrast);
 	--destructive: var(--seed-color-fg-critical);
 	--border: var(--seed-color-stroke-neutral-subtle);
 	--input: var(--seed-color-stroke-neutral-weak);
 	--ring: var(--seed-color-stroke-focus-ring);
-	--chart-1: var(--seed-color-palette-carrot-400);
-	--chart-2: var(--seed-color-palette-carrot-700);
-	--chart-3: var(--seed-color-palette-green-700);
+	--chart-1: var(--seed-color-palette-blue-500);
+	--chart-2: var(--seed-color-palette-blue-800);
+	--chart-3: var(--naru-connect);
 	--chart-4: var(--seed-color-palette-purple-700);
 	--chart-5: var(--seed-color-palette-gray-700);
 	--radius: 0.75rem;
 	--sidebar: var(--seed-color-bg-layer-default);
 	--sidebar-foreground: var(--seed-color-fg-neutral);
-	--sidebar-primary: var(--seed-color-bg-brand-solid);
+	--sidebar-primary: var(--naru-primary);
 	--sidebar-primary-foreground: var(--seed-color-fg-neutral-inverted);
-	--sidebar-accent: var(--seed-color-bg-brand-weak);
-	--sidebar-accent-foreground: var(--seed-color-fg-brand-contrast);
+	--sidebar-accent: var(--naru-primary-weak);
+	--sidebar-accent-foreground: var(--naru-primary-contrast);
 	--sidebar-border: var(--seed-color-stroke-neutral-subtle);
 	--sidebar-ring: var(--seed-color-stroke-focus-ring);
 }
