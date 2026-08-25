@@ -131,10 +131,11 @@ export interface DtwMatch {
 
 /**
  * Finds the closest saved reference to `sequence` (raw, un-normalized), regardless of
- * distance -- confirmation is unconditional (use-sign-capture.ts), so this is the only
- * lookup recognition needs; DEFAULT_DTW_THRESHOLD is used only to scale the display
- * similarity, not to gate this. Reads the in-memory cache synchronously (no network call)
- * since this runs every video frame.
+ * distance -- always returns a nearest neighbor if any reference is registered, even a bad
+ * one. The caller (use-sign-capture.ts's resolvePrediction) is what applies
+ * DEFAULT_DTW_THRESHOLD to decide whether the match is close enough to actually confirm, vs.
+ * just showing it as a live "closest so far" hint. Reads the in-memory cache synchronously
+ * (no network call) since this runs every video frame.
  */
 export function closestReference(sequence: number[][]): DtwMatch | null {
 	const normalized = normalizeSequence(sequence);
