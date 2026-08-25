@@ -58,6 +58,7 @@ export {
 	ListButtonItem,
 	ListDivider,
 	ListItem,
+	ListLinkItem,
 	ListSwitchItem,
 } from "./seed-design/ui/list";
 export { ListHeader } from "./seed-design/ui/list-header";

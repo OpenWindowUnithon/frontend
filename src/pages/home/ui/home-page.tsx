@@ -200,9 +200,8 @@ export function HomePage() {
 
 	return (
 		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
-			<header className="flex min-h-14 shrink-0 items-center justify-between pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
+			<header className="flex min-h-14 shrink-0 items-center pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
 				<h1 className="sr-only">전화 키패드</h1>
-				<div />
 			</header>
 
 			<section className="flex min-h-0 flex-1 flex-col items-center justify-end overflow-y-auto pb-5">
