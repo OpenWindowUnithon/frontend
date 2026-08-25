@@ -144,6 +144,18 @@ export const HAND_CONNECTIONS: ReadonlyArray<[number, number]> = [
 	[19, 20],
 ];
 
+export const POSE_ARM_CONNECTIONS: ReadonlyArray<[number, number]> = [
+	[11, 12], // Shoulders
+	[11, 13], // Left upper arm
+	[13, 15], // Left forearm
+	[12, 14], // Right upper arm
+	[14, 16], // Right forearm
+	[11, 23], // Left torso
+	[12, 24], // Right torso
+	[23, 24], // Hip line
+];
+
+const POSE_KEY_JOINTS = [11, 12, 13, 14, 15, 16];
 const FINGERTIP_INDICES = new Set([4, 8, 12, 16, 20]);
 
 export interface DrawLandmarkOptions {
@@ -151,6 +163,8 @@ export interface DrawLandmarkOptions {
 	connectorColor?: string;
 	jointColor?: string;
 	fingertipColor?: string;
+	armConnectorColor?: string;
+	armJointColor?: string;
 	lineWidth?: number;
 	nodeRadius?: number;
 }
@@ -158,11 +172,13 @@ export interface DrawLandmarkOptions {
 interface Point2D {
 	x: number;
 	y: number;
+	visibility?: number;
 }
 
 function drawConnections(
 	ctx: CanvasRenderingContext2D,
 	points: Point2D[],
+	connections: ReadonlyArray<[number, number]>,
 	color: string,
 	width: number,
 ) {
@@ -171,10 +187,12 @@ function drawConnections(
 	ctx.lineJoin = "round";
 	ctx.strokeStyle = color;
 
-	for (const [startIdx, endIdx] of HAND_CONNECTIONS) {
+	for (const [startIdx, endIdx] of connections) {
 		const start = points[startIdx];
 		const end = points[endIdx];
 		if (!start || !end) continue;
+		if (start.visibility !== undefined && start.visibility < 0.4) continue;
+		if (end.visibility !== undefined && end.visibility < 0.4) continue;
 
 		ctx.beginPath();
 		ctx.moveTo(start.x, start.y);
@@ -210,6 +228,28 @@ function drawNodes(
 	}
 }
 
+function drawArmJoints(
+	ctx: CanvasRenderingContext2D,
+	points: Point2D[],
+	color: string,
+	radius: number,
+) {
+	for (const idx of POSE_KEY_JOINTS) {
+		const pt = points[idx];
+		if (!pt) continue;
+		if (pt.visibility !== undefined && pt.visibility < 0.4) continue;
+
+		ctx.beginPath();
+		ctx.arc(pt.x, pt.y, radius, 0, 2 * Math.PI);
+		ctx.fillStyle = color;
+		ctx.fill();
+
+		ctx.lineWidth = 2;
+		ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+		ctx.stroke();
+	}
+}
+
 /**
  * Utility to render 21 hand landmarks and skeleton onto a Canvas 2D context.
  */
@@ -238,8 +278,59 @@ export function drawHandLandmarks(
 			y: lm.y * height,
 		}));
 
-		drawConnections(ctx, points, connectorColor, lineWidth);
+		drawConnections(ctx, points, HAND_CONNECTIONS, connectorColor, lineWidth);
 		drawNodes(ctx, points, jointColor, fingertipColor, nodeRadius);
+	}
+
+	ctx.restore();
+}
+
+/**
+ * Renders both Upper Body Arm Skeleton and Hand Landmarks together onto Canvas.
+ */
+export function drawFullBodySkeleton(
+	ctx: CanvasRenderingContext2D,
+	hands: NormalizedLandmark[][],
+	poseLandmarks: NormalizedLandmark[] | null,
+	width: number,
+	height: number,
+	options: DrawLandmarkOptions = {},
+) {
+	const {
+		isMirrored = true,
+		connectorColor = "rgba(59, 130, 246, 0.85)",
+		jointColor = "rgba(255, 255, 255, 0.95)",
+		fingertipColor = "rgba(239, 68, 68, 0.95)",
+		armConnectorColor = "rgba(16, 185, 129, 0.85)",
+		armJointColor = "rgba(52, 211, 153, 1)",
+		lineWidth = 3,
+		nodeRadius = 4,
+	} = options;
+
+	ctx.save();
+	ctx.clearRect(0, 0, width, height);
+
+	// 1. Draw Arm & Upper Body Pose Skeleton
+	if (poseLandmarks && poseLandmarks.length >= 17) {
+		const posePoints: Point2D[] = poseLandmarks.map((lm) => ({
+			x: isMirrored ? (1 - lm.x) * width : lm.x * width,
+			y: lm.y * height,
+			visibility: lm.visibility,
+		}));
+
+		drawConnections(ctx, posePoints, POSE_ARM_CONNECTIONS, armConnectorColor, lineWidth + 1);
+		drawArmJoints(ctx, posePoints, armJointColor, nodeRadius + 2);
+	}
+
+	// 2. Draw Hand Landmarks
+	for (const landmarks of hands) {
+		const handPoints: Point2D[] = landmarks.map((lm) => ({
+			x: isMirrored ? (1 - lm.x) * width : lm.x * width,
+			y: lm.y * height,
+		}));
+
+		drawConnections(ctx, handPoints, HAND_CONNECTIONS, connectorColor, lineWidth);
+		drawNodes(ctx, handPoints, jointColor, fingertipColor, nodeRadius);
 	}
 
 	ctx.restore();

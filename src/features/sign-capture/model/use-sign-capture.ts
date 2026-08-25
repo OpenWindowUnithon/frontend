@@ -6,7 +6,8 @@ import type {
 import type { Room } from "livekit-client";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
-import { drawHandLandmarks, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
+import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
+import { recognizeArmPoseSign } from "./arm-pose-recognizer";
 import {
 	extractFeatures,
 	latestPoseLandmarks,
@@ -25,6 +26,7 @@ export interface UseSignCaptureReturn {
 	isModelReady: boolean;
 	showSkeleton: boolean;
 	detectedHandsCount: number;
+	isArmDetected: boolean;
 	activeSign: RecognizedSign | null;
 	lastConfirmedSign: RecognizedSign | null;
 	recentSigns: RecognizedSign[];
@@ -41,6 +43,7 @@ function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
 	video: HTMLVideoElement | null,
 	hands: NormalizedLandmark[][],
+	poseLandmarks: NormalizedLandmark[] | null,
 	showSkeleton: boolean,
 ) {
 	if (!canvas || !showSkeleton) return;
@@ -55,12 +58,15 @@ function renderLandmarksToCanvas(
 	const ctx = canvas.getContext("2d");
 	if (!ctx) return;
 
-	drawHandLandmarks(ctx, hands, canvas.width, canvas.height, {
+	drawFullBodySkeleton(ctx, hands, poseLandmarks, canvas.width, canvas.height, {
 		isMirrored: true,
 		connectorColor: "rgba(59, 130, 246, 0.85)",
 		jointColor: "rgba(255, 255, 255, 0.95)",
 		fingertipColor: "rgba(239, 68, 68, 0.95)",
+		armConnectorColor: "rgba(16, 185, 129, 0.85)",
+		armJointColor: "rgba(52, 211, 153, 1)",
 		lineWidth: 3,
+		nodeRadius: 4,
 	});
 }
 
@@ -95,7 +101,7 @@ function updateCandidateStreak(
 
 /**
  * Captures local webcam stream, runs MediaPipe Hand & Pose landmarker,
- * processes KSL neural recognition & gesture classification, renders skeletons,
+ * processes full-arm and hand gesture recognition, renders full body skeletons,
  * and publishes recognized text to the LiveKit room.
  */
 export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
@@ -126,6 +132,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const [cameraError, setCameraError] = useState(false);
 	const [showSkeleton, setShowSkeleton] = useState(true);
 	const [detectedHandsCount, setDetectedHandsCount] = useState(0);
+	const [isArmDetected, setIsArmDetected] = useState(false);
 	const [activeSign, setActiveSign] = useState<RecognizedSign | null>(null);
 	const [lastConfirmedSign, setLastConfirmedSign] = useState<RecognizedSign | null>(null);
 	const [recentSigns, setRecentSigns] = useState<RecognizedSign[]>([]);
@@ -172,6 +179,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		}
 		setIsCameraActive(false);
 		setDetectedHandsCount(0);
+		setIsArmDetected(false);
 		setActiveSign(null);
 	}, []);
 
@@ -214,9 +222,11 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		[room],
 	);
 
-	// Pose Landmarker hook
+	// Pose Landmarker hook for arm tracking
 	usePoseLandmarker(videoRef, isCameraActive, (result: PoseLandmarkerResult) => {
 		latestPoseRef.current = result;
+		const pose = latestPoseLandmarks(result);
+		setIsArmDetected(Boolean(pose && pose.length >= 17));
 	});
 
 	const handleKslPrediction = useCallback(
@@ -260,14 +270,27 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 			const hands = handResult.landmarks ?? [];
 			setDetectedHandsCount(hands.length);
 
-			renderLandmarksToCanvas(canvasRef.current, videoRef.current, hands, showSkeleton);
+			const poseLandmarks = latestPoseLandmarks(latestPoseRef.current);
+			renderLandmarksToCanvas(
+				canvasRef.current,
+				videoRef.current,
+				hands,
+				poseLandmarks,
+				showSkeleton,
+			);
 
 			const now = performance.now();
 
-			// 1. Rule-based gesture recognition
-			const gestureCandidate = recognizeSignGesture(hands, now);
+			// 1. Full-Arm & Pose Sign Recognition (e.g. 감사합니다, 안녕하세요, 식사, 만나다, 나)
+			const armCandidate = recognizeArmPoseSign(poseLandmarks, now);
+
+			// 2. Hand Gesture Recognition (e.g. 사랑합니다, 최고/좋다, OK, 숫자 등)
+			const handCandidate = recognizeSignGesture(hands, now);
+
+			// Prioritize arm candidate or hand candidate
+			const candidate = armCandidate ?? handCandidate;
 			const { activeSign: gestureActive, confirmedSign: gestureConfirmed } =
-				filterRef.current?.update(gestureCandidate, now) ?? {
+				filterRef.current?.update(candidate, now) ?? {
 					activeSign: null,
 					confirmedSign: null,
 				};
@@ -280,9 +303,8 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 				commitConfirmedSign(gestureConfirmed);
 			}
 
-			// 2. KSL LSTM Sequence Recognition
+			// 3. KSL LSTM Sequence Recognition (Legatalee neural model)
 			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
-			const poseLandmarks = latestPoseLandmarks(latestPoseRef.current);
 			windowRef.current.push(
 				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
 			);
@@ -293,8 +315,8 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 			predictingRef.current = true;
 			predictSign(frames)
 				.then(({ label, confidence }) => {
-					const candidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
-					handleKslPrediction(candidate, confidence);
+					const predCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+					handleKslPrediction(predCandidate, confidence);
 				})
 				.catch((err) => {
 					console.error("Sign prediction error:", err);
@@ -321,6 +343,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		isModelReady,
 		showSkeleton,
 		detectedHandsCount,
+		isArmDetected,
 		activeSign,
 		lastConfirmedSign,
 		recentSigns,

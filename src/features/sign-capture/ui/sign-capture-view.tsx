@@ -10,21 +10,25 @@ import {
 	HelpCircle,
 	History,
 	Sparkles,
+	User,
 } from "lucide-react";
 import { useState } from "react";
 import type { RecognizedSign } from "../model/sign-recognizer";
 import { useSignCapture } from "../model/use-sign-capture";
 
 const SUPPORTED_SIGNS = [
-	{ label: "안녕하세요", icon: "👋", desc: "손바닥을 펴서 인사" },
-	{ label: "사랑합니다", icon: "🤟", desc: "엄지, 검지, 새끼 펴기 (I Love You)" },
-	{ label: "최고예요 / 좋아요", icon: "👍", desc: "엄지손가락 세우기" },
-	{ label: "확인 / OK", icon: "👌", desc: "엄지·검지 원 만들기" },
-	{ label: "승리 / 화이팅", icon: "✌️", desc: "V자 손가락 (숫자 2)" },
-	{ label: "부탁 / 죄송", icon: "🙏", desc: "두 손 모으기" },
-	{ label: "감사합니다", icon: "🤝", desc: "두 손 맞대기" },
-	{ label: "1, 3, 4 (지화 숫자)", icon: "☝️", desc: "손가락 개수 펴기" },
-	{ label: "지화 'ㄴ' / 'ㅁ'", icon: "🔤", desc: "L자형 / 주먹" },
+	{ label: "안녕하세요", icon: "👋", desc: "손과 팔을 들어 인사하거나 정중히 모으기 (KSL)" },
+	{ label: "감사합니다", icon: "🙏", desc: "왼손 등 위에 오른손을 얹어 톡톡 두드리기 (KSL)" },
+	{ label: "식사 / 밥", icon: "🍚", desc: "손을 입/턱 쪽으로 가져가 식사 표현 (KSL)" },
+	{ label: "만나다", icon: "👥", desc: "양손을 가슴 중앙으로 모아 만남 표현 (KSL)" },
+	{ label: "사랑합니다", icon: "🤟", desc: "엄지, 검지, 새끼를 편 사랑의 수어 (I Love You)" },
+	{ label: "나 / 저", icon: "🙋", desc: "검지손가락으로 자신의 가슴 중앙 가리키기" },
+	{ label: "최고예요 / 좋아요", icon: "👍", desc: "엄지손가락을 세워 긍정과 칭찬 표현" },
+	{ label: "확인 / OK", icon: "👌", desc: "엄지와 검지로 동그란 원 만들기" },
+	{ label: "승리 / 화이팅", icon: "✌️", desc: "V자 손가락 펼치기 (숫자 2)" },
+	{ label: "부탁 / 죄송", icon: "🙇‍♂️", desc: "가슴 앞에서 두 손 모으기" },
+	{ label: "1, 3, 4 (지화 숫자)", icon: "☝️", desc: "손가락 개수로 숫자 표현" },
+	{ label: "지화 'ㄴ' / 'ㅁ'", icon: "🔤", desc: "한글 지화 L자형 / 주먹" },
 ];
 
 function CameraStatusBar({
@@ -32,33 +36,54 @@ function CameraStatusBar({
 	isModelReady,
 	isCameraActive,
 	detectedHandsCount,
+	isArmDetected,
 }: {
 	isLoadingModel: boolean;
 	isModelReady: boolean;
 	isCameraActive: boolean;
 	detectedHandsCount: number;
+	isArmDetected: boolean;
 }) {
 	return (
-		<div className="flex items-center gap-2">
+		<div className="flex items-center gap-1.5 overflow-x-auto">
 			{isLoadingModel && (
-				<span className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/20 px-3 py-1 font-medium text-amber-300 text-xs backdrop-blur-md">
-					<Activity className="h-3.5 w-3.5 animate-spin" />
-					AI 모델 로딩 중...
+				<span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/20 px-2.5 py-0.5 font-medium text-amber-300 text-xs backdrop-blur-md whitespace-nowrap">
+					<Activity className="h-3 w-3 animate-spin" />
+					AI 로딩 중
 				</span>
 			)}
 
 			{isModelReady && isCameraActive && (
-				<span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-3 py-1 font-medium text-emerald-300 text-xs backdrop-blur-md">
-					<Sparkles className="h-3.5 w-3.5" />
-					수화 인식 AI 활성
+				<span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-0.5 font-medium text-emerald-300 text-xs backdrop-blur-md whitespace-nowrap">
+					<Sparkles className="h-3 w-3" />
+					AI 활성
 				</span>
 			)}
 
 			{isCameraActive && (
-				<span className="flex items-center gap-1 rounded-full border border-white/10 bg-black/40 px-2.5 py-1 font-medium text-neutral-300 text-xs backdrop-blur-md">
-					<Hand className="h-3.5 w-3.5" />
-					{detectedHandsCount > 0 ? `${detectedHandsCount}개 손 감지` : "손 대기 중"}
-				</span>
+				<>
+					<span
+						className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-medium text-xs backdrop-blur-md whitespace-nowrap ${
+							isArmDetected
+								? "border-emerald-500/30 bg-emerald-500/20 text-emerald-300"
+								: "border-white/10 bg-black/40 text-neutral-400"
+						}`}
+					>
+						<User className="h-3 w-3" />
+						{isArmDetected ? "팔/상체 감지됨" : "팔 대기"}
+					</span>
+
+					<span
+						className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-medium text-xs backdrop-blur-md whitespace-nowrap ${
+							detectedHandsCount > 0
+								? "border-blue-500/30 bg-blue-500/20 text-blue-300"
+								: "border-white/10 bg-black/40 text-neutral-400"
+						}`}
+					>
+						<Hand className="h-3 w-3" />
+						{detectedHandsCount > 0 ? `${detectedHandsCount}개 손` : "손 대기"}
+					</span>
+				</>
 			)}
 		</div>
 	);
@@ -73,14 +98,14 @@ function ActiveSignOverlay({
 }) {
 	if (activeSign) {
 		return (
-			<div className="flex w-full items-center justify-between rounded-xl border border-blue-500/40 bg-black/75 px-4 py-2.5 text-white shadow-lg backdrop-blur-md animate-in fade-in zoom-in-95">
+			<div className="flex w-full items-center justify-between rounded-xl border border-blue-500/40 bg-black/80 px-4 py-2 text-white shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95">
 				<div className="flex items-center gap-3">
 					<span className="text-2xl">{activeSign.icon}</span>
 					<div className="text-left">
 						<div className="flex items-center gap-2">
 							<span className="font-bold text-base text-white">{activeSign.label}</span>
 							<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-								인식 중 {Math.round(activeSign.confidence * 100)}%
+								{Math.round(activeSign.confidence * 100)}%
 							</span>
 						</div>
 						<p className="text-neutral-400 text-xs">{activeSign.description}</p>
@@ -88,7 +113,7 @@ function ActiveSignOverlay({
 				</div>
 				<div className="flex items-center gap-1 font-medium text-emerald-400 text-xs">
 					<CheckCircle2 className="h-4 w-4" />
-					<span>인식 완료</span>
+					<span>인식 중</span>
 				</div>
 			</div>
 		);
@@ -96,11 +121,11 @@ function ActiveSignOverlay({
 
 	return (
 		<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
-			<Hand className="h-3.5 w-3.5 text-neutral-400" />
+			<Sparkles className="h-3.5 w-3.5 text-blue-400" />
 			<span>
 				{recognizedText
-					? `마지막 수화: "${recognizedText}"`
-					: "카메라를 향해 손을 비춰 수어를 표현해보세요"}
+					? `인식된 수어: "${recognizedText}"`
+					: "팔과 손을 움직여 '안녕하세요', '감사합니다' 등 수어를 표현해보세요"}
 			</span>
 		</div>
 	);
@@ -154,7 +179,7 @@ function RecentSignsHistory({
 				</span>
 				{recentSigns.map((item) => (
 					<span
-						key={item.timestamp}
+						key={item.id}
 						className="flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-1 font-medium text-neutral-200 text-xs whitespace-nowrap"
 					>
 						<span>{item.icon}</span>
@@ -175,11 +200,10 @@ function RecentSignsHistory({
 
 function GesturesGuide({ onClose }: { onClose: () => void }) {
 	return (
-		<div className="w-full rounded-xl border border-neutral-800 bg-neutral-900/90 p-4 text-neutral-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+		<div className="w-full rounded-xl border border-neutral-800 bg-neutral-900/95 p-4 text-neutral-200 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
 			<div className="mb-3 flex items-center justify-between border-neutral-800 border-b pb-2">
 				<h5 className="flex items-center gap-2 font-semibold text-sm text-white">
-					<Sparkles className="h-4 w-4 text-amber-400" />
-					인식 가능한 수어 & 제스처 가이드
+					<Sparkles className="h-4 w-4 text-blue-400" />팔 & 손 한국 수어(KSL) 인식 동작 가이드
 				</h5>
 				<button
 					type="button"
@@ -189,16 +213,16 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 					닫기
 				</button>
 			</div>
-			<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+			<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
 				{SUPPORTED_SIGNS.map((sign) => (
 					<div
 						key={sign.label}
-						className="flex items-start gap-2.5 rounded-lg border border-neutral-700/50 bg-neutral-800/60 p-2.5"
+						className="flex items-start gap-2.5 rounded-lg border border-neutral-700/50 bg-neutral-800/70 p-2.5"
 					>
 						<span className="text-xl">{sign.icon}</span>
 						<div className="min-w-0 flex-1">
-							<div className="truncate font-medium text-white text-xs">{sign.label}</div>
-							<div className="text-[11px] text-neutral-400 leading-tight">{sign.desc}</div>
+							<div className="truncate font-semibold text-white text-xs">{sign.label}</div>
+							<div className="mt-0.5 text-[11px] text-neutral-400 leading-tight">{sign.desc}</div>
 						</div>
 					</div>
 				))}
@@ -207,7 +231,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 	);
 }
 
-/** Camera preview for the signer — runs Hand Landmarker locally and shows the last recognized phrase. */
+/** Camera preview for the signer — runs Hand & Pose Landmarker locally and tracks full arm signs. */
 export function SignCaptureView({
 	room = null,
 	className = "",
@@ -224,6 +248,7 @@ export function SignCaptureView({
 		isModelReady,
 		showSkeleton,
 		detectedHandsCount,
+		isArmDetected,
 		activeSign,
 		recentSigns,
 		recognizedText,
@@ -251,30 +276,31 @@ export function SignCaptureView({
 					<track kind="captions" />
 				</video>
 
-				{/* Hand Landmark Skeleton Canvas Overlay */}
+				{/* Full-Body Arm & Hand Landmark Skeleton Canvas Overlay */}
 				<canvas
 					ref={canvasRef}
 					className="pointer-events-none absolute inset-0 h-full w-full object-cover"
 				/>
 
 				{/* Top Controls & Status Bar */}
-				<div className="pointer-events-auto absolute top-3 right-3 left-3 flex items-center justify-between">
+				<div className="pointer-events-auto absolute top-3 right-3 left-3 flex items-center justify-between gap-2">
 					<CameraStatusBar
 						isLoadingModel={isLoadingModel}
 						isModelReady={isModelReady}
 						isCameraActive={isCameraActive}
 						detectedHandsCount={detectedHandsCount}
+						isArmDetected={isArmDetected}
 					/>
 
 					{/* Action Buttons */}
-					<div className="flex items-center gap-1.5">
+					<div className="flex shrink-0 items-center gap-1.5">
 						<button
 							type="button"
 							onClick={toggleSkeleton}
 							title={showSkeleton ? "스켈레톤 숨기기" : "스켈레톤 표시"}
 							className={`flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md transition-colors ${
 								showSkeleton
-									? "border-blue-400/40 bg-blue-600/80 text-white"
+									? "border-emerald-400/40 bg-emerald-600/80 text-white"
 									: "border-white/10 bg-black/50 text-neutral-400 hover:text-white"
 							}`}
 						>
@@ -297,10 +323,10 @@ export function SignCaptureView({
 						<button
 							type="button"
 							onClick={() => setShowGuide((prev) => !prev)}
-							title="수어 제스처 가이드"
+							title="수어 동작 가이드"
 							className={`flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md transition-colors ${
 								showGuide
-									? "border-amber-300/40 bg-amber-500/80 text-white"
+									? "border-blue-400/40 bg-blue-600/80 text-white"
 									: "border-white/10 bg-black/50 text-neutral-400 hover:text-white"
 							}`}
 						>
