@@ -1,6 +1,8 @@
 import type { Room } from "livekit-client";
 import {
 	Activity,
+	ArrowRight,
+	Bot,
 	Camera,
 	CameraOff,
 	CheckCircle2,
@@ -17,23 +19,15 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Button, Input } from "@/shared/ui";
+import { KSL_WORD_METADATA } from "../model/sign-model";
 import type { RecognizedSign } from "../model/sign-recognizer";
 import { useSignCapture } from "../model/use-sign-capture";
 
-const SUPPORTED_SIGNS = [
-	{ label: "안녕하세요", icon: "👋", desc: "손과 팔을 들어 인사하거나 정중히 모으기 (KSL)" },
-	{ label: "감사합니다", icon: "🙏", desc: "왼손 등 위에 오른손을 얹어 톡톡 두드리기 (KSL)" },
-	{ label: "식사 / 밥", icon: "🍚", desc: "손을 입/턱 쪽으로 가져가 식사 표현 (KSL)" },
-	{ label: "만나다", icon: "👥", desc: "양손을 가슴 중앙으로 모아 만남 표현 (KSL)" },
-	{ label: "사랑합니다", icon: "🤟", desc: "엄지, 검지, 새끼를 편 사랑의 수어 (I Love You)" },
-	{ label: "나 / 저", icon: "🙋", desc: "검지손가락으로 자신의 가슴 중앙 가리키기" },
-	{ label: "최고예요 / 좋아요", icon: "👍", desc: "엄지손가락을 세워 긍정과 칭찬 표현" },
-	{ label: "확인 / OK", icon: "👌", desc: "엄지와 검지로 동그란 원 만들기" },
-	{ label: "승리 / 화이팅", icon: "✌️", desc: "V자 손가락 펼치기 (숫자 2)" },
-	{ label: "부탁 / 죄송", icon: "🙇‍♂️", desc: "가슴 앞에서 두 손 모으기" },
-	{ label: "1, 3, 4 (지화 숫자)", icon: "☝️", desc: "손가락 개수로 숫자 표현" },
-	{ label: "지화 'ㄴ' / 'ㅁ'", icon: "🔤", desc: "한글 지화 L자형 / 주먹" },
-];
+const KSL_VOCABULARY_LIST = Object.entries(KSL_WORD_METADATA).map(([label, meta]) => ({
+	label,
+	icon: meta.icon,
+	desc: meta.description,
+}));
 
 function CameraStatusBar({
 	isLoadingModel,
@@ -53,14 +47,14 @@ function CameraStatusBar({
 			{isLoadingModel && (
 				<span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/20 px-2.5 py-0.5 font-medium text-amber-300 text-xs backdrop-blur-md whitespace-nowrap">
 					<Activity className="h-3 w-3 animate-spin" />
-					AI 로딩 중
+					LSTM 로딩 중
 				</span>
 			)}
 
 			{isModelReady && isCameraActive && (
 				<span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-0.5 font-medium text-emerald-300 text-xs backdrop-blur-md whitespace-nowrap">
 					<Sparkles className="h-3 w-3" />
-					AI 활성
+					KSL AI 활성
 				</span>
 			)}
 
@@ -95,23 +89,23 @@ function CameraStatusBar({
 
 function ActiveSignOverlay({
 	activeSign,
-	recognizedText,
-	composedSentence,
+	wordBuffer,
+	isComposing,
 }: {
 	activeSign: RecognizedSign | null;
-	recognizedText: string | null;
-	composedSentence: string | null;
+	wordBuffer: string[];
+	isComposing: boolean;
 }) {
 	if (activeSign) {
 		return (
-			<div className="flex w-full items-center justify-between rounded-xl border border-blue-500/40 bg-black/80 px-4 py-2 text-white shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95">
+			<div className="flex w-full items-center justify-between rounded-xl border border-blue-500/40 bg-black/85 px-4 py-2.5 text-white shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95">
 				<div className="flex items-center gap-3">
 					<span className="text-2xl">{activeSign.icon}</span>
 					<div className="text-left">
 						<div className="flex items-center gap-2">
 							<span className="font-bold text-base text-white">{activeSign.label}</span>
 							<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-								{Math.round(activeSign.confidence * 100)}%
+								LSTM {Math.round(activeSign.confidence * 100)}%
 							</span>
 						</div>
 						<p className="text-neutral-400 text-xs">{activeSign.description}</p>
@@ -119,28 +113,81 @@ function ActiveSignOverlay({
 				</div>
 				<div className="flex items-center gap-1 font-medium text-emerald-400 text-xs">
 					<CheckCircle2 className="h-4 w-4" />
-					<span>인식 중</span>
+					<span>시퀀스 인식 중</span>
+				</div>
+			</div>
+		);
+	}
+
+	if (wordBuffer.length > 0) {
+		return (
+			<div className="flex items-center gap-2 rounded-full border border-blue-500/30 bg-black/80 px-4 py-1.5 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
+				{isComposing ? (
+					<Activity className="h-3.5 w-3.5 animate-spin text-amber-400" />
+				) : (
+					<Sparkles className="h-3.5 w-3.5 text-blue-400" />
+				)}
+				<span className="font-medium text-neutral-300">누적 단어:</span>
+				<div className="flex items-center gap-1.5">
+					{wordBuffer.map((w, i, arr) => (
+						<span
+							key={w + arr.slice(0, i).filter((item) => item === w).length}
+							className="flex items-center gap-1"
+						>
+							<span className="rounded bg-blue-500/20 px-1.5 py-0.5 font-semibold text-blue-300">
+								{w}
+							</span>
+							{i < arr.length - 1 && <ArrowRight className="h-3 w-3 text-neutral-500" />}
+						</span>
+					))}
 				</div>
 			</div>
 		);
 	}
 
 	return (
-		<div className="flex max-w-full flex-col items-center gap-1">
-			{composedSentence && (
-				<div className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-black/80 px-4 py-1 text-emerald-300 text-xs shadow-lg backdrop-blur-md animate-in fade-in">
-					<Sparkles className="h-3.5 w-3.5" />
-					<span className="font-medium">번역: "{composedSentence}"</span>
+		<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
+			<Hand className="h-3.5 w-3.5 text-neutral-400" />
+			<span>카메라 앞에서 수어를 표현하면 30프레임 LSTM으로 자동 인식됩니다</span>
+		</div>
+	);
+}
+
+function SentenceResultBanner({
+	composedSentence,
+	isComposing,
+}: {
+	composedSentence: string | null;
+	isComposing: boolean;
+}) {
+	if (!composedSentence && !isComposing) return null;
+
+	return (
+		<div className="flex w-full items-center justify-between rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-3.5 text-emerald-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
+			<div className="flex items-center gap-3">
+				<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300">
+					{isComposing ? (
+						<Activity className="h-4 w-4 animate-spin" />
+					) : (
+						<Bot className="h-4 w-4" />
+					)}
 				</div>
-			)}
-			<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
-				<Hand className="h-3.5 w-3.5 text-neutral-400" />
-				<span className="truncate">
-					{recognizedText
-						? `인식 단어: ${recognizedText}`
-						: "팔과 손을 움직여 '안녕하세요', '감사합니다' 등 수어를 표현해보세요"}
-				</span>
+				<div>
+					<div className="flex items-center gap-2">
+						<span className="font-semibold text-emerald-400 text-xs">
+							{isComposing ? "LLM 자연어 문장 변환 중..." : "AI 실시간 번역 문장"}
+						</span>
+					</div>
+					<p className="mt-0.5 font-bold text-sm text-white">
+						{composedSentence ?? "단어를 자연스러운 문장으로 조합하고 있습니다..."}
+					</p>
+				</div>
 			</div>
+			{!isComposing && (
+				<span className="rounded-full bg-emerald-500/20 px-2 py-0.5 font-medium text-[11px] text-emerald-300">
+					음성 발화 완료
+				</span>
+			)}
 		</div>
 	);
 }
@@ -189,7 +236,7 @@ function RecentSignsHistory({
 			<div className="flex items-center gap-2 overflow-x-auto py-0.5 scrollbar-none">
 				<span className="flex items-center gap-1 pl-1 font-medium text-neutral-400 text-xs whitespace-nowrap">
 					<History className="h-3.5 w-3.5" />
-					기록:
+					단어 기록:
 				</span>
 				{recentSigns.map((item) => (
 					<span
@@ -206,7 +253,7 @@ function RecentSignsHistory({
 				onClick={onClear}
 				className="ml-2 text-neutral-500 text-xs whitespace-nowrap hover:text-neutral-300"
 			>
-				지우기
+				초기화
 			</button>
 		</div>
 	);
@@ -239,12 +286,12 @@ function CustomWordRecorder({
 	return (
 		<details className="w-full rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 text-neutral-200 text-sm backdrop-blur-sm">
 			<summary className="flex cursor-pointer items-center justify-between font-medium text-neutral-300 text-xs hover:text-white">
-				<span>고급: 모델에 없는 나만의 수어 단어 등록 (DTW)</span>
+				<span>고급: 모델에 없는 나만의 수어 단어 등록 (DTW 매칭)</span>
 				<ChevronDown className="h-4 w-4 text-neutral-400" />
 			</summary>
 			<div className="flex flex-col gap-2.5 pt-3">
 				<p className="text-neutral-400 text-xs leading-relaxed">
-					모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 수어로 표현한 뒤 "이 동작 저장"을
+					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 표현한 뒤 "이 동작 저장"을
 					누르면, 브라우저가 기억하여 다음부터 인식합니다.
 				</p>
 				<div className="flex gap-2">
@@ -294,7 +341,8 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 		<div className="w-full rounded-xl border border-neutral-800 bg-neutral-900/95 p-4 text-neutral-200 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
 			<div className="mb-3 flex items-center justify-between border-neutral-800 border-b pb-2">
 				<h5 className="flex items-center gap-2 font-semibold text-sm text-white">
-					<Sparkles className="h-4 w-4 text-blue-400" />팔 & 손 한국 수어(KSL) 인식 동작 가이드
+					<Sparkles className="h-4 w-4 text-blue-400" />
+					KSL 한국 수어 11종 학습 모델 어휘 가이드
 				</h5>
 				<button
 					type="button"
@@ -305,7 +353,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 				</button>
 			</div>
 			<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-				{SUPPORTED_SIGNS.map((sign) => (
+				{KSL_VOCABULARY_LIST.map((sign) => (
 					<div
 						key={sign.label}
 						className="flex items-start gap-2.5 rounded-lg border border-neutral-700/50 bg-neutral-800/70 p-2.5"
@@ -340,9 +388,10 @@ export function SignCaptureView({
 		showSkeleton,
 		detectedHandsCount,
 		isArmDetected,
+		isComposing,
 		activeSign,
 		recentSigns,
-		recognizedText,
+		wordBuffer,
 		composedSentence,
 		references,
 		toggleCamera,
@@ -440,12 +489,15 @@ export function SignCaptureView({
 					<div className="absolute right-3 bottom-3 left-3 flex flex-col items-center">
 						<ActiveSignOverlay
 							activeSign={activeSign}
-							recognizedText={recognizedText}
-							composedSentence={composedSentence}
+							wordBuffer={wordBuffer}
+							isComposing={isComposing}
 						/>
 					</div>
 				)}
 			</div>
+
+			{/* AI Translated Natural Sentence Banner */}
+			<SentenceResultBanner composedSentence={composedSentence} isComposing={isComposing} />
 
 			{/* Recognition History Log */}
 			<RecentSignsHistory recentSigns={recentSigns} onClear={clearHistory} />

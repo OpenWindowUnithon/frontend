@@ -8,7 +8,6 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { sendChatText } from "@/entities/call";
 import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
 import { composeSignSentence } from "../api/sign-api";
-import { recognizeArmPoseSign } from "./arm-pose-recognizer";
 import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
 	extractFeatures,
@@ -16,8 +15,8 @@ import {
 	RollingWindow,
 	splitHandsByHandedness,
 } from "./landmarks";
-import { CONFIDENCE_THRESHOLD, predictSign } from "./sign-model";
-import { type RecognizedSign, recognizeSignGesture, SignStabilityFilter } from "./sign-recognizer";
+import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
+import type { RecognizedSign } from "./sign-recognizer";
 
 export interface UseSignCaptureReturn {
 	videoRef: RefObject<HTMLVideoElement | null>;
@@ -29,10 +28,12 @@ export interface UseSignCaptureReturn {
 	showSkeleton: boolean;
 	detectedHandsCount: number;
 	isArmDetected: boolean;
+	isComposing: boolean;
 	activeSign: RecognizedSign | null;
 	lastConfirmedSign: RecognizedSign | null;
 	recentSigns: RecognizedSign[];
 	recognizedText: string | null;
+	wordBuffer: string[];
 	composedSentence: string | null;
 	references: Record<string, number>;
 	toggleCamera: () => void;
@@ -43,8 +44,8 @@ export interface UseSignCaptureReturn {
 }
 
 const CONSECUTIVE_REQUIRED = 3;
-const NO_SIGN_STREAK_TO_RESET = 5;
-const UTTERANCE_PAUSE_MS = 1500;
+const NO_SIGN_STREAK_TO_RESET = 6;
+const UTTERANCE_PAUSE_MS = 1400;
 
 function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
@@ -108,24 +109,16 @@ function updateCandidateStreak(
 
 /**
  * Captures local webcam stream, runs MediaPipe Hand & Pose landmarker,
- * processes full-arm and hand gesture recognition, compiles recognized words
- * into natural sentences via LLM, and publishes them to the LiveKit room.
+ * accumulates 30-frame sequence windows into the LSTM neural classifier & DTW matching,
+ * segments word glosses by pause/consecutive hold, and passes the gloss sequence
+ * to the backend LLM for natural conversational Korean sentence translation.
  */
 export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 
-	const filterRef = useRef<SignStabilityFilter | null>(null);
-	if (!filterRef.current) {
-		filterRef.current = new SignStabilityFilter({
-			windowDurationMs: 350,
-			minConsensusRatio: 0.65,
-			emitCooldownMs: 2200,
-		});
-	}
-
-	// KSL LSTM Window & State
+	// 30-Frame Rolling Window & LSTM State
 	const windowRef = useRef(new RollingWindow());
 	const latestPoseRef = useRef<PoseLandmarkerResult | null>(null);
 	const predictionStateRef = useRef<PredictionState>({
@@ -144,9 +137,11 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const [showSkeleton, setShowSkeleton] = useState(true);
 	const [detectedHandsCount, setDetectedHandsCount] = useState(0);
 	const [isArmDetected, setIsArmDetected] = useState(false);
+	const [isComposing, setIsComposing] = useState(false);
 	const [activeSign, setActiveSign] = useState<RecognizedSign | null>(null);
 	const [lastConfirmedSign, setLastConfirmedSign] = useState<RecognizedSign | null>(null);
 	const [recentSigns, setRecentSigns] = useState<RecognizedSign[]>([]);
+	const [wordBuffer, setWordBuffer] = useState<string[]>([]);
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
 	const [composedSentence, setComposedSentence] = useState<string | null>(null);
 	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
@@ -214,6 +209,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const clearHistory = useCallback(() => {
 		setRecentSigns([]);
 		wordBufferRef.current = [];
+		setWordBuffer([]);
 		setRecognizedText(null);
 		setComposedSentence(null);
 	}, []);
@@ -227,13 +223,14 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		};
 	}, [startCamera, stopCamera]);
 
+	// Debounced LLM translation of word sequence
 	const flushUtterance = useCallback(() => {
 		if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
 		utteranceTimerRef.current = setTimeout(() => {
 			const words = [...wordBufferRef.current];
-			wordBufferRef.current = [];
 			if (words.length === 0) return;
 
+			setIsComposing(true);
 			composeSignSentence(words)
 				.then((sentence) => {
 					setComposedSentence(sentence);
@@ -247,6 +244,9 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 					if (room) {
 						sendChatText(room, fallback);
 					}
+				})
+				.finally(() => {
+					setIsComposing(false);
 				});
 		}, UTTERANCE_PAUSE_MS);
 	}, [room]);
@@ -258,15 +258,16 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 
 			// Append word to sentence buffer
 			wordBufferRef.current = [...wordBufferRef.current, sign.label];
+			setWordBuffer([...wordBufferRef.current]);
 			setRecognizedText(wordBufferRef.current.join(" "));
 
-			// Trigger debounced sentence composition
+			// Trigger debounced LLM sentence composition
 			flushUtterance();
 		},
 		[flushUtterance],
 	);
 
-	// Pose Landmarker hook for arm tracking
+	// Pose Landmarker hook for upper body / arm tracking
 	usePoseLandmarker(videoRef, isCameraActive, (result: PoseLandmarkerResult) => {
 		latestPoseRef.current = result;
 		const pose = latestPoseLandmarks(result);
@@ -275,20 +276,22 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 
 	const handleKslPrediction = useCallback(
 		(candidate: string | null, confidence: number) => {
+			const meta = candidate ? KSL_WORD_METADATA[candidate] : undefined;
+			const icon = meta?.icon ?? "🤟";
+			const desc = meta?.description ?? `KSL 수어: ${candidate}`;
+
 			if (candidate) {
-				setActiveSign((prev) =>
-					prev && prev.category !== "action"
-						? prev
-						: {
-								id: `ksl_${candidate}`,
-								label: candidate,
-								description: `KSL 수어: ${candidate}`,
-								icon: "🤟",
-								confidence,
-								category: "action",
-								timestamp: Date.now(),
-							},
-				);
+				setActiveSign({
+					id: `ksl_${candidate}`,
+					label: candidate,
+					description: desc,
+					icon,
+					confidence,
+					category: "action",
+					timestamp: Date.now(),
+				});
+			} else {
+				setActiveSign(null);
 			}
 
 			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
@@ -296,8 +299,8 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 				const kslSign: RecognizedSign = {
 					id: `ksl_${candidate}_${Date.now()}`,
 					label: candidate,
-					description: `KSL 수어: ${candidate}`,
-					icon: "🤟",
+					description: desc,
+					icon,
 					confidence,
 					category: "action",
 					timestamp: Date.now(),
@@ -308,7 +311,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		[commitConfirmedSign],
 	);
 
-	// Frame processing callback
+	// Main Frame processing callback: 30-frame sequence evaluation
 	const handleLandmarkerResult = useCallback(
 		(handResult: HandLandmarkerResult) => {
 			const hands = handResult.landmarks ?? [];
@@ -323,31 +326,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 				showSkeleton,
 			);
 
-			const now = performance.now();
-
-			// 1. Full-Arm & Pose Sign Recognition (e.g. 감사합니다, 안녕하세요, 식사, 만나다, 나)
-			const armCandidate = recognizeArmPoseSign(poseLandmarks, now);
-
-			// 2. Hand Gesture Recognition (e.g. 사랑합니다, 최고/좋다, OK, 숫자 등)
-			const handCandidate = recognizeSignGesture(hands, now);
-
-			// Prioritize arm candidate or hand candidate
-			const candidate = armCandidate ?? handCandidate;
-			const { activeSign: gestureActive, confirmedSign: gestureConfirmed } =
-				filterRef.current?.update(candidate, now) ?? {
-					activeSign: null,
-					confirmedSign: null,
-				};
-
-			if (gestureActive) {
-				setActiveSign(gestureActive);
-			}
-
-			if (gestureConfirmed) {
-				commitConfirmedSign(gestureConfirmed);
-			}
-
-			// 3. KSL LSTM Sequence Recognition (Legatalee neural model) & DTW Custom Matching
+			// Extract 150-dimensional pose & dual-hand feature vector
 			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
 			windowRef.current.push(
 				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
@@ -373,7 +352,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 					predictingRef.current = false;
 				});
 		},
-		[showSkeleton, commitConfirmedSign, handleKslPrediction],
+		[showSkeleton, handleKslPrediction],
 	);
 
 	const { isLoading: isLoadingModel, isReady: isModelReady } = useHandLandmarker(
@@ -405,9 +384,11 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		showSkeleton,
 		detectedHandsCount,
 		isArmDetected,
+		isComposing,
 		activeSign,
 		lastConfirmedSign,
 		recentSigns,
+		wordBuffer,
 		recognizedText,
 		composedSentence,
 		references,
