@@ -33,6 +33,7 @@ import {
 	TextField,
 	TextFieldInput,
 } from "@/shared/ui";
+import { PageTopBar } from "@/widgets/page-top-bar";
 import { PhoneNav } from "@/widgets/phone-nav";
 
 function formatPhone(value: string) {
@@ -73,10 +74,10 @@ export function ProfilePage() {
 		onError: (error) => snackbar.error(registrationErrorMessage(error)),
 	});
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
-			<section className="flex flex-1 flex-col overflow-y-auto pt-10 pb-6">
-				<h1 className="text-3xl font-bold">나의 정보</h1>
-				<p className="mt-2 text-muted-foreground">내 번호와 통화 환경을 설정할 수 있어요.</p>
+		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
+			<PageTopBar title="나의 정보" />
+			<section className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-6 pb-6">
+				<p className="text-muted-foreground">내 번호와 통화 환경을 설정할 수 있어요.</p>
 				<TextField
 					className="mt-10"
 					label="내 전화번호"

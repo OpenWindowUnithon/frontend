@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getDeviceKey, getMyPhone, getRecentCalls, type RecentCall } from "@/entities/call";
 import { IdentityPlaceholder, List, ListDivider, ListItem, SeedAvatar } from "@/shared/ui";
+import { PageTopBar } from "@/widgets/page-top-bar";
 import { PhoneNav } from "@/widgets/phone-nav";
 
 function formatPhone(value: string) {
@@ -23,9 +24,9 @@ export function RecentPage() {
 		enabled: registered,
 	});
 	return (
-		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
-			<section className="min-h-0 flex-1 overflow-y-auto pt-10">
-				<h1 className="text-3xl font-bold">최근 통화</h1>
+		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
+			<PageTopBar title="최근 통화" />
+			<section className="min-h-0 flex-1 overflow-y-auto pt-6 pb-6">
 				{!registered && (
 					<p className="mt-8 text-muted-foreground">나의 정보에서 전화번호를 먼저 등록해 주세요.</p>
 				)}
