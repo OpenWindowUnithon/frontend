@@ -7,9 +7,9 @@ import {
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type MicState = "off" | "on" | "muted";
+export type MicState = "off" | "on";
 
-/** Publishes/mutes the local mic track on first use — matches the backend token grant (HEARING only can publish). */
+/** Publishes/unpublishes the local mic track on first use — matches the backend token grant (HEARING only can publish). */
 export function useToggleMic(room: Room | null) {
 	const [state, setState] = useState<MicState>("off");
 	const trackRef = useRef<LocalAudioTrack | null>(null);
@@ -28,7 +28,7 @@ export function useToggleMic(room: Room | null) {
 			return;
 		}
 		trackRef.current = track;
-		setState(track.isMuted ? "muted" : "on");
+		setState("on");
 	}, [room]);
 
 	const togglePower = useCallback(() => {
@@ -64,34 +64,18 @@ export function useToggleMic(room: Room | null) {
 		return operation;
 	}, [room, syncWithRoom]);
 
-	const toggleMute = useCallback(async () => {
-		const track = trackRef.current;
-		if (!track) return;
-		if (track.isMuted) {
-			await track.unmute();
-			setState("on");
-		} else {
-			await track.mute();
-			setState("muted");
-		}
-	}, []);
-
 	useEffect(() => {
 		syncWithRoom();
 		if (!room) return;
 		room.on(RoomEvent.LocalTrackPublished, syncWithRoom);
 		room.on(RoomEvent.LocalTrackUnpublished, syncWithRoom);
-		room.on(RoomEvent.TrackMuted, syncWithRoom);
-		room.on(RoomEvent.TrackUnmuted, syncWithRoom);
 
 		return () => {
 			room.off(RoomEvent.LocalTrackPublished, syncWithRoom);
 			room.off(RoomEvent.LocalTrackUnpublished, syncWithRoom);
-			room.off(RoomEvent.TrackMuted, syncWithRoom);
-			room.off(RoomEvent.TrackUnmuted, syncWithRoom);
 			trackRef.current?.stop();
 		};
 	}, [room, syncWithRoom]);
 
-	return { state, togglePower, toggleMute };
+	return { state, togglePower };
 }

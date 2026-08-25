@@ -13,7 +13,7 @@ export {
 	sendHeartbeat,
 	terminateCall,
 } from "./api/call-api";
-export { sendChatText } from "./api/call-chat";
+export { sendChatText, subscribeToChatText } from "./api/call-chat";
 export type { AiVoice, AiVoiceSpeed, CallPreferences } from "./model/call-preferences";
 export {
 	DEFAULT_CALL_PREFERENCES,

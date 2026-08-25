@@ -68,16 +68,26 @@ export interface UseSignCaptureReturn {
 	removeReference: (word: string) => void;
 }
 
-// A DTW match already represents a whole-window judgment (the last 30 frames as a whole
-// resemble a reference), not a per-frame class score, so a single frame under threshold is
-// enough to confirm -- see updateCandidateStreak.
-const REQUIRED_STREAK = 1;
-const NO_SIGN_STREAK_TO_RESET = 5;
+// The DTW candidate is recomputed every processed frame (~30/s), and during the transition
+// between two signs (motion blur, hand briefly leaving the ideal pose) the momentarily
+// closest reference can flicker to an unrelated word for a frame or two. Requiring the same
+// candidate to win a few frames in a row filters that transitional noise out before it's
+// treated as a real confirmation, without adding perceptible lag once a sign is actually
+// being held. See updateCandidateStreak.
+const REQUIRED_STREAK = 3;
+// How many consecutive no-hands frames before the "already confirmed" guard clears, letting
+// the same word be confirmed again on a later, separate signing of it. Needs to be longer
+// than a typical brief tracking dropout mid-gesture (fast motion, hand grazing frame edge),
+// or the same word gets re-confirmed moments after it was already added to the buffer.
+const NO_SIGN_STREAK_TO_RESET = 10;
 // If both hands haven't been detected for this long, treat it as the end of the signer's
 // turn and send whatever's been confirmed so far off for translation. Replaces a
 // pause-since-last-confirmed-word debounce, which didn't distinguish "hands down, done
-// signing" from "hands still up, just pausing mid-sentence."
-export const HANDS_GONE_FLUSH_MS = 1500;
+// signing" from "hands still up, just pausing mid-sentence." Needs to comfortably clear a
+// normal thinking/breathing pause between words in one sentence -- too short here means a
+// mid-sentence pause gets treated as sentence-end, splitting one utterance into several
+// fragments that each get sent to the LLM and end up saying overlapping/similar things.
+export const HANDS_GONE_FLUSH_MS = 3000;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
 // How many past translated sentences to keep around for display -- translation keeps
