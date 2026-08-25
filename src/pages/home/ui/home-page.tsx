@@ -2,6 +2,7 @@ import { IconBackspacekeyFill, IconPhoneFill } from "@karrotmarket/react-monochr
 import { Icon } from "@seed-design/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import axios from "axios";
 import { Camera } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -11,6 +12,7 @@ import {
 	getIncomingCall,
 	getMyPhone,
 	registerPhone,
+	setMyPhone,
 } from "@/entities/call";
 import { setSessionKey } from "@/features/join-call";
 import { isLocalOrPreview, snackbar } from "@/shared/lib";
@@ -79,10 +81,14 @@ function formatPhoneNumber(value: string) {
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
+function isPhoneOwnershipConflict(error: unknown) {
+	return axios.isAxiosError(error) && error.response?.status === 409;
+}
+
 export function HomePage() {
 	const navigate = useNavigate();
 	const [deviceKey] = useState(getDeviceKey);
-	const [myPhone] = useState(getMyPhone);
+	const [myPhone, setStoredPhone] = useState(getMyPhone);
 	const [digits, setDigits] = useState("");
 	const [communication] = useState(() => getCallPreferences().defaultCommunication);
 	const phone = formatPhoneNumber(digits);
@@ -92,7 +98,15 @@ export function HomePage() {
 
 	const registration = useMutation({
 		mutationFn: () => registerPhone(normalizedMyPhone, deviceKey),
-		onError: () => snackbar.error("전화번호를 등록하지 못했어요."),
+		onError: (error) => {
+			if (isPhoneOwnershipConflict(error)) {
+				setMyPhone("");
+				setStoredPhone("");
+				snackbar.error("저장된 전화번호가 다른 기기에 등록되어 초기화했어요.");
+				return;
+			}
+			snackbar.error("전화번호를 등록하지 못했어요.");
+		},
 	});
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: restore the persisted identity only on mount
@@ -158,7 +172,15 @@ export function HomePage() {
 				},
 			});
 		},
-		onError: () => snackbar.error("전화를 걸지 못했어요. 잠시 후 다시 시도해 주세요."),
+		onError: (error) => {
+			if (isPhoneOwnershipConflict(error)) {
+				setMyPhone("");
+				setStoredPhone("");
+				snackbar.error("저장된 전화번호가 다른 기기에 등록되어 초기화했어요.");
+				return;
+			}
+			snackbar.error("전화를 걸지 못했어요. 잠시 후 다시 시도해 주세요.");
+		},
 	});
 
 	const startCall = () => {

@@ -49,6 +49,10 @@ function registrationErrorMessage(error: unknown) {
 	return "전화번호를 저장하지 못했어요.";
 }
 
+function isPhoneOwnershipConflict(error: unknown) {
+	return axios.isAxiosError(error) && error.response?.status === 409;
+}
+
 export function ProfilePage() {
 	const topBar = useCompactTopBar();
 	const [phone, setPhone] = useState(getMyPhone);
@@ -72,7 +76,15 @@ export function ProfilePage() {
 			setPhone(registered);
 			snackbar.success("전화번호를 저장했어요.");
 		},
-		onError: (error) => snackbar.error(registrationErrorMessage(error)),
+		onError: (error) => {
+			if (isPhoneOwnershipConflict(error)) {
+				setMyPhone("");
+				setPhone("");
+				snackbar.error("이 전화번호가 다른 기기에 등록되어 입력값을 초기화했어요.");
+				return;
+			}
+			snackbar.error(registrationErrorMessage(error));
+		},
 	});
 	return (
 		<main className="relative mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card">
