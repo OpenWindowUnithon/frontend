@@ -10,7 +10,14 @@ const pending: Array<(currentAdapter: SnackbarAdapter) => void> = [];
 function show(message: string, variant: SnackbarVariant = "default") {
 	const create = (currentAdapter: SnackbarAdapter) => {
 		currentAdapter.create({
-			render: () => <Snackbar message={message} variant={variant} />,
+			render: () => (
+				<Snackbar
+					message={message}
+					variant={variant}
+					actionLabel="닫기"
+					onAction={() => currentAdapter.dismiss()}
+				/>
+			),
 		});
 	};
 
