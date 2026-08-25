@@ -325,6 +325,8 @@ export function useSignCapture(
 			const icon = meta?.icon ?? "🤟";
 			const desc = meta?.description ?? `KSL 수어: ${candidate}`;
 
+			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
+
 			if (candidate) {
 				setActiveSign({
 					id: `ksl_${candidate}`,
@@ -335,9 +337,14 @@ export function useSignCapture(
 					category: "action",
 					timestamp: Date.now(),
 				});
+			} else if (predictionStateRef.current.candidateStreak >= NO_SIGN_STREAK_TO_RESET) {
+				// Only clear once the "no sign" streak is sustained, not on every single null
+				// tick -- otherwise the live indicator flickers off during brief detection
+				// gaps mid-gesture. This mirrors the same threshold updateCandidateStreak uses
+				// to reset the segment, so "recognition ended" and "indicator cleared" agree.
+				setActiveSign(null);
 			}
 
-			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
 			if (candidate && isConfirmed) {
 				const kslSign: RecognizedSign = {
 					id: `ksl_${candidate}_${Date.now()}`,
