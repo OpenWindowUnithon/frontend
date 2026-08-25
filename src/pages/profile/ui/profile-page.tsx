@@ -6,6 +6,7 @@ import {
 } from "@karrotmarket/react-monochrome-icon";
 import { Icon } from "@seed-design/react";
 import { useMutation } from "@tanstack/react-query";
+import axios from "axios";
 import { type ReactNode, useState } from "react";
 import {
 	type CallPreferences,
@@ -40,6 +41,13 @@ function formatPhone(value: string) {
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
+function registrationErrorMessage(error: unknown) {
+	if (axios.isAxiosError<{ message?: string }>(error)) {
+		return error.response?.data?.message ?? "서버 연결을 확인해 주세요.";
+	}
+	return "전화번호를 저장하지 못했어요.";
+}
+
 export function ProfilePage() {
 	const [phone, setPhone] = useState(getMyPhone);
 	const [preferences, setPreferencesState] = useState(getCallPreferences);
@@ -62,7 +70,7 @@ export function ProfilePage() {
 			setPhone(registered);
 			snackbar.success("전화번호를 저장했어요.");
 		},
-		onError: () => snackbar.error("전화번호를 저장하지 못했어요."),
+		onError: (error) => snackbar.error(registrationErrorMessage(error)),
 	});
 	return (
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
