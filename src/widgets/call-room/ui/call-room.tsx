@@ -170,7 +170,7 @@ function TextCall({
 					) : (
 						<div className="flex justify-end" key={`message-${item.message.id}`}>
 							<div
-								className={`w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground ${item.message.state === "failed" ? "outline-2 outline-dashed outline-destructive" : ""}`}
+								className={`w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-foreground ${item.message.state === "failed" ? "outline-2 outline-dashed outline-destructive" : ""}`}
 							>
 								<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
 									{item.message.text}
@@ -245,10 +245,10 @@ function TextCallControls({
 	};
 	const controls = [
 		{
-			label: speakerOff ? "스피커 켜기" : "스피커 끄기",
+			label: speakerOff ? "스피커 꺼짐" : "스피커 켜짐",
 			icon: speakerOff ? IconSpeakerWave2SlashFill : IconSpeakerWave2Fill,
 			onClick: toggleSpeaker,
-			active: speakerOff,
+			active: !speakerOff,
 		},
 		{
 			label: ending ? "종료 중" : "종료",

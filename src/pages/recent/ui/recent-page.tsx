@@ -144,7 +144,7 @@ function RecentCallItem({
 			})
 		: "-";
 	const duration =
-		call.durationSeconds == null
+		call.status === "REJECTED" || call.durationSeconds == null
 			? null
 			: `${Math.floor(call.durationSeconds / 60)}분 ${call.durationSeconds % 60}초`;
 
