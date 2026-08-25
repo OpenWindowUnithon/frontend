@@ -415,6 +415,12 @@ export function useSignCapture(
 				});
 			}
 
+			// While a custom-word take is recording, skip live recognition entirely -- the
+			// signer is deliberately repeating one gesture on a beat for registration, not
+			// signing normally, so running the recognizer here would only risk polluting the
+			// word buffer/LLM compose flow with junk from the practice reps.
+			if (recordingWordRef.current) return;
+
 			const frames = windowRef.current.toArray();
 			if (!frames || predictingRef.current) return;
 
