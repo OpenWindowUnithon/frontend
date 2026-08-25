@@ -16,6 +16,7 @@ import {
 	Sparkles,
 	Trash2,
 	User,
+	Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { Button, Input } from "@/shared/ui";
@@ -23,11 +24,30 @@ import { KSL_WORD_METADATA } from "../model/sign-model";
 import type { RecognizedSign } from "../model/sign-recognizer";
 import { useSignCapture } from "../model/use-sign-capture";
 
-const KSL_VOCABULARY_LIST = Object.entries(KSL_WORD_METADATA).map(([label, meta]) => ({
-	label,
-	icon: meta.icon,
-	desc: meta.description,
-}));
+const COMBINED_VOCABULARY_LIST = [
+	...Object.entries(KSL_WORD_METADATA).map(([label, meta]) => ({
+		label,
+		icon: meta.icon,
+		desc: meta.description,
+		type: "KSL 단어 / 동적 모션",
+	})),
+	{
+		label: "사랑합니다",
+		icon: "🤟",
+		desc: "엄지, 검지, 새끼를 편 I Love You 수어",
+		type: "제스처 / 정적",
+	},
+	{
+		label: "최고예요 / 좋아요",
+		icon: "👍",
+		desc: "엄지손가락을 세워 긍정 표현",
+		type: "제스처 / 정적",
+	},
+	{ label: "확인 / OK", icon: "👌", desc: "엄지와 검지로 동그란 원 만들기", type: "제스처 / 정적" },
+	{ label: "승리 / 2", icon: "✌️", desc: "V자 손가락 펼치기", type: "제스처 / 정적" },
+	{ label: "부탁 / 죄송", icon: "🙇‍♂️", desc: "가슴 앞에서 두 손 모으기", type: "제스처 / 정적" },
+	{ label: "1, 3, 4 (지화 숫자)", icon: "☝️", desc: "손가락 개수로 숫자 표현", type: "지화 / 숫자" },
+];
 
 function CameraStatusBar({
 	isLoadingModel,
@@ -35,26 +55,28 @@ function CameraStatusBar({
 	isCameraActive,
 	detectedHandsCount,
 	isArmDetected,
+	isMoving,
 }: {
 	isLoadingModel: boolean;
 	isModelReady: boolean;
 	isCameraActive: boolean;
 	detectedHandsCount: number;
 	isArmDetected: boolean;
+	isMoving: boolean;
 }) {
 	return (
 		<div className="flex items-center gap-1.5 overflow-x-auto">
 			{isLoadingModel && (
 				<span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/20 px-2.5 py-0.5 font-medium text-amber-300 text-xs backdrop-blur-md whitespace-nowrap">
 					<Activity className="h-3 w-3 animate-spin" />
-					LSTM 로딩 중
+					AI 로딩 중
 				</span>
 			)}
 
 			{isModelReady && isCameraActive && (
 				<span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-0.5 font-medium text-emerald-300 text-xs backdrop-blur-md whitespace-nowrap">
 					<Sparkles className="h-3 w-3" />
-					KSL AI 활성
+					하이브리드 AI
 				</span>
 			)}
 
@@ -68,7 +90,7 @@ function CameraStatusBar({
 						}`}
 					>
 						<User className="h-3 w-3" />
-						{isArmDetected ? "팔/상체 감지됨" : "팔 대기"}
+						{isArmDetected ? "상체/팔 감지" : "팔 대기"}
 					</span>
 
 					<span
@@ -80,6 +102,17 @@ function CameraStatusBar({
 					>
 						<Hand className="h-3 w-3" />
 						{detectedHandsCount > 0 ? `${detectedHandsCount}개 손` : "손 대기"}
+					</span>
+
+					<span
+						className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 font-medium text-xs backdrop-blur-md whitespace-nowrap ${
+							isMoving
+								? "border-amber-500/30 bg-amber-500/20 text-amber-300"
+								: "border-purple-500/30 bg-purple-500/20 text-purple-300"
+						}`}
+					>
+						<Zap className="h-3 w-3" />
+						{isMoving ? "모션 추적 중" : "정지 자세 인식"}
 					</span>
 				</>
 			)}
@@ -105,7 +138,7 @@ function ActiveSignOverlay({
 						<div className="flex items-center gap-2">
 							<span className="font-bold text-base text-white">{activeSign.label}</span>
 							<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
-								LSTM {Math.round(activeSign.confidence * 100)}%
+								{Math.round(activeSign.confidence * 100)}%
 							</span>
 						</div>
 						<p className="text-neutral-400 text-xs">{activeSign.description}</p>
@@ -113,7 +146,7 @@ function ActiveSignOverlay({
 				</div>
 				<div className="flex items-center gap-1 font-medium text-emerald-400 text-xs">
 					<CheckCircle2 className="h-4 w-4" />
-					<span>시퀀스 인식 중</span>
+					<span>실시간 인식됨</span>
 				</div>
 			</div>
 		);
@@ -148,7 +181,7 @@ function ActiveSignOverlay({
 	return (
 		<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
 			<Hand className="h-3.5 w-3.5 text-neutral-400" />
-			<span>카메라 앞에서 수어를 표현하면 30프레임 LSTM으로 자동 인식됩니다</span>
+			<span>수어 동작이나 제스처를 취하면 실시간으로 인식되고 문장으로 합성됩니다</span>
 		</div>
 	);
 }
@@ -179,12 +212,12 @@ function SentenceResultBanner({
 						</span>
 					</div>
 					<p className="mt-0.5 font-bold text-sm text-white">
-						{composedSentence ?? "단어를 자연스러운 문장으로 조합하고 있습니다..."}
+						{composedSentence ?? "단어들을 자연스러운 문장으로 조합하고 있습니다..."}
 					</p>
 				</div>
 			</div>
 			{!isComposing && (
-				<span className="rounded-full bg-emerald-500/20 px-2 py-0.5 font-medium text-[11px] text-emerald-300">
+				<span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 font-medium text-[11px] text-emerald-300">
 					음성 발화 완료
 				</span>
 			)}
@@ -342,7 +375,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 			<div className="mb-3 flex items-center justify-between border-neutral-800 border-b pb-2">
 				<h5 className="flex items-center gap-2 font-semibold text-sm text-white">
 					<Sparkles className="h-4 w-4 text-blue-400" />
-					KSL 한국 수어 11종 학습 모델 어휘 가이드
+					하이브리드 한국 수어(KSL) & 제스처 가이드
 				</h5>
 				<button
 					type="button"
@@ -353,14 +386,19 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 				</button>
 			</div>
 			<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-				{KSL_VOCABULARY_LIST.map((sign) => (
+				{COMBINED_VOCABULARY_LIST.map((sign) => (
 					<div
 						key={sign.label}
 						className="flex items-start gap-2.5 rounded-lg border border-neutral-700/50 bg-neutral-800/70 p-2.5"
 					>
 						<span className="text-xl">{sign.icon}</span>
 						<div className="min-w-0 flex-1">
-							<div className="truncate font-semibold text-white text-xs">{sign.label}</div>
+							<div className="flex items-center justify-between gap-1">
+								<span className="truncate font-semibold text-white text-xs">{sign.label}</span>
+								<span className="rounded bg-neutral-700/60 px-1 py-0.2 font-medium text-[9px] text-neutral-400">
+									{sign.type}
+								</span>
+							</div>
 							<div className="mt-0.5 text-[11px] text-neutral-400 leading-tight">{sign.desc}</div>
 						</div>
 					</div>
@@ -370,7 +408,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 	);
 }
 
-/** Camera preview for the signer — runs Hand & Pose Landmarker locally and tracks full arm signs. */
+/** Camera preview for the signer — runs Hand & Pose Landmarker locally with velocity gating & hybrid engine. */
 export function SignCaptureView({
 	room = null,
 	className = "",
@@ -388,6 +426,7 @@ export function SignCaptureView({
 		showSkeleton,
 		detectedHandsCount,
 		isArmDetected,
+		isMoving,
 		isComposing,
 		activeSign,
 		recentSigns,
@@ -434,6 +473,7 @@ export function SignCaptureView({
 						isCameraActive={isCameraActive}
 						detectedHandsCount={detectedHandsCount}
 						isArmDetected={isArmDetected}
+						isMoving={isMoving}
 					/>
 
 					{/* Action Buttons */}

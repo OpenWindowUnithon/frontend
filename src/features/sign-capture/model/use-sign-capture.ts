@@ -8,6 +8,7 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 import { sendChatText } from "@/entities/call";
 import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
 import { composeSignSentence } from "../api/sign-api";
+import { recognizeArmPoseSign } from "./arm-pose-recognizer";
 import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
 	extractFeatures,
@@ -16,7 +17,7 @@ import {
 	splitHandsByHandedness,
 } from "./landmarks";
 import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
-import type { RecognizedSign } from "./sign-recognizer";
+import { type RecognizedSign, recognizeSignGesture, SignStabilityFilter } from "./sign-recognizer";
 
 export interface UseSignCaptureReturn {
 	videoRef: RefObject<HTMLVideoElement | null>;
@@ -28,6 +29,7 @@ export interface UseSignCaptureReturn {
 	showSkeleton: boolean;
 	detectedHandsCount: number;
 	isArmDetected: boolean;
+	isMoving: boolean;
 	isComposing: boolean;
 	activeSign: RecognizedSign | null;
 	lastConfirmedSign: RecognizedSign | null;
@@ -43,9 +45,10 @@ export interface UseSignCaptureReturn {
 	removeReference: (word: string) => void;
 }
 
-const CONSECUTIVE_REQUIRED = 3;
-const NO_SIGN_STREAK_TO_RESET = 6;
+const CONSECUTIVE_REQUIRED = 2;
+const NO_SIGN_STREAK_TO_RESET = 5;
 const UTTERANCE_PAUSE_MS = 1400;
+const MOTION_VELOCITY_THRESHOLD = 0.12;
 
 function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
@@ -107,16 +110,78 @@ function updateCandidateStreak(
 	return { isConfirmed: false };
 }
 
+interface MotionTracker {
+	lastWristL?: { x: number; y: number };
+	lastWristR?: { x: number; y: number };
+	lastTime: number;
+	recentVelocities: number[];
+}
+
+function calculateInstantVelocity(
+	tracker: MotionTracker,
+	poseLandmarks: NormalizedLandmark[] | null,
+	now: number,
+): { velocity: number; isMoving: boolean } {
+	const dt = Math.max(0.016, (now - tracker.lastTime) / 1000);
+	tracker.lastTime = now;
+
+	let distL = 0;
+	let distR = 0;
+
+	if (poseLandmarks && poseLandmarks.length >= 17) {
+		const wristL = poseLandmarks[15];
+		const wristR = poseLandmarks[16];
+
+		if (wristL && tracker.lastWristL) {
+			const dx = wristL.x - tracker.lastWristL.x;
+			const dy = wristL.y - tracker.lastWristL.y;
+			distL = Math.sqrt(dx * dx + dy * dy);
+		}
+		if (wristR && tracker.lastWristR) {
+			const dx = wristR.x - tracker.lastWristR.x;
+			const dy = wristR.y - tracker.lastWristR.y;
+			distR = Math.sqrt(dx * dx + dy * dy);
+		}
+
+		if (wristL) tracker.lastWristL = { x: wristL.x, y: wristL.y };
+		if (wristR) tracker.lastWristR = { x: wristR.x, y: wristR.y };
+	}
+
+	const maxDist = Math.max(distL, distR);
+	const instantaneousV = maxDist / dt;
+
+	tracker.recentVelocities.push(instantaneousV);
+	if (tracker.recentVelocities.length > 6) {
+		tracker.recentVelocities.shift();
+	}
+
+	const avgV =
+		tracker.recentVelocities.reduce((a, b) => a + b, 0) / tracker.recentVelocities.length;
+	const isMoving = avgV > MOTION_VELOCITY_THRESHOLD;
+
+	return { velocity: avgV, isMoving };
+}
+
 /**
- * Captures local webcam stream, runs MediaPipe Hand & Pose landmarker,
- * accumulates 30-frame sequence windows into the LSTM neural classifier & DTW matching,
- * segments word glosses by pause/consecutive hold, and passes the gloss sequence
- * to the backend LLM for natural conversational Korean sentence translation.
+ * Captures webcam stream with Velocity Gating & Hybrid Recognition Engine:
+ * 1. During motion (v > threshold): Mutes static rules to prevent transient false positives (e.g. number 4 during thank you),
+ *    feeds 30-frame sequence to LSTM & DTW.
+ * 2. During stillness / settled (v <= threshold): Evaluates static gestures & poses immediately with zero latency.
+ * 3. Accumulates glosses and converts them to natural sentences via LLM translation.
  */
 export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
+
+	const filterRef = useRef<SignStabilityFilter | null>(null);
+	if (!filterRef.current) {
+		filterRef.current = new SignStabilityFilter({
+			windowDurationMs: 250,
+			minConsensusRatio: 0.6,
+			emitCooldownMs: 1800,
+		});
+	}
 
 	// 30-Frame Rolling Window & LSTM State
 	const windowRef = useRef(new RollingWindow());
@@ -128,6 +193,12 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	});
 	const predictingRef = useRef(false);
 
+	// Velocity Motion Tracker
+	const motionTrackerRef = useRef<MotionTracker>({
+		lastTime: performance.now(),
+		recentVelocities: [],
+	});
+
 	// Word buffer & Utterance state for LLM translation
 	const wordBufferRef = useRef<string[]>([]);
 	const utteranceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,6 +208,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const [showSkeleton, setShowSkeleton] = useState(true);
 	const [detectedHandsCount, setDetectedHandsCount] = useState(0);
 	const [isArmDetected, setIsArmDetected] = useState(false);
+	const [isMoving, setIsMoving] = useState(false);
 	const [isComposing, setIsComposing] = useState(false);
 	const [activeSign, setActiveSign] = useState<RecognizedSign | null>(null);
 	const [lastConfirmedSign, setLastConfirmedSign] = useState<RecognizedSign | null>(null);
@@ -256,13 +328,14 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 			setLastConfirmedSign(sign);
 			setRecentSigns((prev) => [sign, ...prev.slice(0, 9)]);
 
-			// Append word to sentence buffer
-			wordBufferRef.current = [...wordBufferRef.current, sign.label];
-			setWordBuffer([...wordBufferRef.current]);
-			setRecognizedText(wordBufferRef.current.join(" "));
-
-			// Trigger debounced LLM sentence composition
-			flushUtterance();
+			// Append word to sentence buffer (avoid consecutive duplicate words in buffer)
+			const lastWord = wordBufferRef.current[wordBufferRef.current.length - 1];
+			if (lastWord !== sign.label) {
+				wordBufferRef.current = [...wordBufferRef.current, sign.label];
+				setWordBuffer([...wordBufferRef.current]);
+				setRecognizedText(wordBufferRef.current.join(" "));
+				flushUtterance();
+			}
 		},
 		[flushUtterance],
 	);
@@ -290,8 +363,6 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 					category: "action",
 					timestamp: Date.now(),
 				});
-			} else {
-				setActiveSign(null);
 			}
 
 			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
@@ -311,7 +382,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		[commitConfirmedSign],
 	);
 
-	// Main Frame processing callback: 30-frame sequence evaluation
+	// Main Frame processing callback with Velocity Gating
 	const handleLandmarkerResult = useCallback(
 		(handResult: HandLandmarkerResult) => {
 			const hands = handResult.landmarks ?? [];
@@ -326,7 +397,39 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 				showSkeleton,
 			);
 
-			// Extract 150-dimensional pose & dual-hand feature vector
+			const now = performance.now();
+
+			// 1. Calculate Kinematic Motion Velocity
+			const { isMoving: currentMoving } = calculateInstantVelocity(
+				motionTrackerRef.current,
+				poseLandmarks,
+				now,
+			);
+			setIsMoving(currentMoving);
+
+			// 2. Velocity-Gated Static Gesture & Arm Pose Recognition
+			// When moving: static rules are MUTED to eliminate transient noise (e.g. number 4 during thank you)
+			// When still/settled: static rules fire immediately for instant feedback
+			if (!currentMoving) {
+				const armCandidate = recognizeArmPoseSign(poseLandmarks, now);
+				const handCandidate = recognizeSignGesture(hands, now);
+				const staticCandidate = armCandidate ?? handCandidate;
+
+				const { activeSign: gestureActive, confirmedSign: gestureConfirmed } =
+					filterRef.current?.update(staticCandidate, now) ?? {
+						activeSign: null,
+						confirmedSign: null,
+					};
+
+				if (gestureActive) {
+					setActiveSign(gestureActive);
+				}
+				if (gestureConfirmed) {
+					commitConfirmedSign(gestureConfirmed);
+				}
+			}
+
+			// 3. Dynamic 30-Frame Sequence Recognition (LSTM + DTW)
 			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
 			windowRef.current.push(
 				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
@@ -343,7 +446,9 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 					const finalCandidate = lstmCandidate ?? dtwMatch?.word ?? null;
 					const finalConfidence = lstmCandidate ? confidence : dtwMatch ? 0.9 : 0;
 
-					handleKslPrediction(finalCandidate, finalConfidence);
+					if (finalCandidate) {
+						handleKslPrediction(finalCandidate, finalConfidence);
+					}
 				})
 				.catch((err) => {
 					console.error("Sign prediction error:", err);
@@ -352,7 +457,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 					predictingRef.current = false;
 				});
 		},
-		[showSkeleton, handleKslPrediction],
+		[showSkeleton, commitConfirmedSign, handleKslPrediction],
 	);
 
 	const { isLoading: isLoadingModel, isReady: isModelReady } = useHandLandmarker(
@@ -384,6 +489,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		showSkeleton,
 		detectedHandsCount,
 		isArmDetected,
+		isMoving,
 		isComposing,
 		activeSign,
 		lastConfirmedSign,
