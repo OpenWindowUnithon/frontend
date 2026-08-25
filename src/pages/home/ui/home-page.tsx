@@ -3,6 +3,7 @@ import { Icon } from "@seed-design/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import axios from "axios";
+import { hapticTrigger } from "ios-haptics";
 import { Camera } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -192,6 +193,12 @@ export function HomePage() {
 		outgoing.mutate();
 	};
 
+	const pressKey = (number: (typeof KEYS)[number][0]) => {
+		void playKeypadTone(number);
+		if (number === "*" || number === "#") return;
+		setDigits((current) => `${current}${number}`.slice(0, 11));
+	};
+
 	return (
 		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
 			<header className="flex min-h-14 shrink-0 items-center justify-between pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
@@ -224,11 +231,14 @@ export function HomePage() {
 					{KEYS.map(([number, letters]) => (
 						<button
 							key={number}
+							ref={hapticTrigger}
 							type="button"
 							className="mx-auto grid size-[68px] touch-manipulation appearance-none grid-rows-[38px_12px] content-center place-items-center rounded-full border-0 bg-secondary p-0 text-foreground shadow-none transition select-none active:scale-95 active:bg-bg-neutral-weak-pressed"
-							onClick={() => {
-								void playKeypadTone(number);
-								setDigits((current) => `${current}${number}`.slice(0, 11));
+							onPointerDown={(event) => {
+								if (event.button === 0) pressKey(number);
+							}}
+							onClick={(event) => {
+								if (event.detail === 0) pressKey(number);
 							}}
 							aria-label={number}
 						>
