@@ -4,8 +4,10 @@ import { z } from "zod";
 export const callModeSchema = z.enum(["DEAF", "HEARING"]);
 export type CallMode = z.infer<typeof callModeSchema>;
 
+export const roomCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{3,40}$/);
+
 export const callParamsSchema = z.object({
-	room: z.string().min(1),
+	room: roomCodeSchema,
 	mode: callModeSchema,
 });
 export type CallParams = z.infer<typeof callParamsSchema>;
