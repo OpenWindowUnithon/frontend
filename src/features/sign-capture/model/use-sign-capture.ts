@@ -401,20 +401,24 @@ export function useSignCapture(
 				.then(({ label, confidence }) => {
 					const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
 					const dtwMatch = matchReference(frames);
-					const finalCandidate = lstmCandidate ?? dtwMatch?.word ?? null;
-					// DTW has no natural 0-1 confidence -- derive one from how close the match
-					// distance is to the threshold, so a borderline match doesn't look as
-					// trustworthy in the UI as a near-exact one.
-					const dtwConfidence = dtwMatch
-						? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD)
-						: 0;
-					const finalConfidence = lstmCandidate ? confidence : dtwConfidence;
 
-					// Demo scope: only the 7 words in DEMO_KSL_WORDS should ever surface as a
-					// recognized sign, regardless of whether the model or a custom DTW reference
-					// produced the match -- anything else is treated the same as "no sign".
-					if (finalCandidate && isDemoKslWord(finalCandidate)) {
-						handleKslPrediction(finalCandidate, finalConfidence);
+					if (dtwMatch) {
+						// A custom DTW reference is something the user explicitly recorded, so it
+						// always wins over the LSTM guess -- the LSTM is fixed to 11 trained classes
+						// and its softmax must pick one of them even for a gesture it's never seen,
+						// so it can confidently misfire on a brand-new custom sign. DTW's distance
+						// to an actual recorded sample is the more trustworthy signal there.
+						// DTW has no natural 0-1 confidence -- derive one from how close the match
+						// distance is to the threshold, so a borderline match doesn't look as
+						// trustworthy in the UI as a near-exact one.
+						const dtwConfidence = Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD);
+						handleKslPrediction(dtwMatch.word, dtwConfidence);
+					} else if (lstmCandidate && isDemoKslWord(lstmCandidate)) {
+						// Demo scope: only the 7 words in DEMO_KSL_WORDS should surface from the
+						// base model's 11-class vocabulary -- anything else is treated as "no sign".
+						// This doesn't apply to DTW matches above, since those are always words the
+						// user deliberately registered.
+						handleKslPrediction(lstmCandidate, confidence);
 					}
 				})
 				.catch((err) => {
