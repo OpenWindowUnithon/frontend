@@ -55,6 +55,8 @@ export interface UseSignCaptureReturn {
 	isRecordingWord: boolean;
 	recordingSecond: number;
 	recordingTotalSeconds: number;
+	recordingTotalReps: number;
+	recordingRepIntervalSeconds: number;
 	recordingResult: { ok: boolean; message: string } | null;
 	toggleCamera: () => void;
 	toggleSkeleton: () => void;
@@ -73,13 +75,20 @@ const MAX_HISTORY_TURNS = 12;
 // running for every utterance, not just the first, so this is a rolling log, not a cap on
 // how many times compose can fire.
 const MAX_DISPLAYED_SENTENCES = 20;
-// Custom-word recording: the signer repeats the gesture once per second for this long, and
-// the continuous recording is split into one DTW reference sample per second -- this matches
-// dtw.ts's MAX_SAMPLES_PER_WORD (10), so a single take fully replaces a word's reference set.
-const RECORD_TOTAL_SECONDS = 10;
-const RECORD_REPS = RECORD_TOTAL_SECONDS;
-// Skip a per-second bucket that's mostly empty (hand out of frame, dropped frames) rather
-// than saving a near-empty/garbage reference sample for it.
+// Custom-word recording: the signer repeats the gesture once per REP_INTERVAL_SECONDS, and
+// the continuous recording is split into one DTW reference sample per rep -- RECORD_REPS
+// matches dtw.ts's MAX_SAMPLES_PER_WORD (10), so a single take fully replaces a word's
+// reference set. REP_INTERVAL_SECONDS is deliberately close to how long the live recognition
+// window (WINDOW_FRAMES=30 processed frames, landmarks.ts) actually spans in wall-clock time
+// -- on a typical device running both landmarkers plus periodic LSTM inference per frame,
+// that's on the order of 1-2s, not a flat 1s. Pacing reps faster than that risks each
+// recorded sample capturing only part of the gesture, which DTW's time-warping can't fix
+// (warping absorbs speed differences, not missing motion).
+const RECORD_REPS = 10;
+const REP_INTERVAL_SECONDS = 2;
+const RECORD_TOTAL_SECONDS = RECORD_REPS * REP_INTERVAL_SECONDS;
+// Skip a per-rep bucket that's mostly empty (hand out of frame, dropped frames) rather than
+// saving a near-empty/garbage reference sample for it.
 const MIN_SEGMENT_FRAMES = 5;
 
 interface ResolvedPrediction {
@@ -551,7 +560,7 @@ export function useSignCapture(
 
 		const buckets: number[][][] = Array.from({ length: RECORD_REPS }, () => []);
 		for (const { t, f } of frames) {
-			const idx = Math.min(RECORD_REPS - 1, Math.floor(t / 1000));
+			const idx = Math.min(RECORD_REPS - 1, Math.floor(t / (REP_INTERVAL_SECONDS * 1000)));
 			buckets[idx]?.push(f);
 		}
 
@@ -640,6 +649,8 @@ export function useSignCapture(
 		isRecordingWord,
 		recordingSecond,
 		recordingTotalSeconds: RECORD_TOTAL_SECONDS,
+		recordingTotalReps: RECORD_REPS,
+		recordingRepIntervalSeconds: REP_INTERVAL_SECONDS,
 		recordingResult,
 		toggleCamera,
 		toggleSkeleton,

@@ -294,6 +294,8 @@ function CustomWordRecorder({
 	isRecording,
 	recordingSecond,
 	recordingTotalSeconds,
+	recordingTotalReps,
+	recordingRepIntervalSeconds,
 	recordingResult,
 	onStartRecording,
 	onCancelRecording,
@@ -303,11 +305,19 @@ function CustomWordRecorder({
 	isRecording: boolean;
 	recordingSecond: number;
 	recordingTotalSeconds: number;
+	recordingTotalReps: number;
+	recordingRepIntervalSeconds: number;
 	recordingResult: { ok: boolean; message: string } | null;
 	onStartRecording: (word: string) => boolean;
 	onCancelRecording: () => void;
 	onRemove: (word: string) => void;
 }) {
+	// recordingSecond is elapsed whole seconds (1..recordingTotalSeconds); derive which rep
+	// beat that falls into so the cadence bar shows reps, not raw seconds.
+	const currentRep = Math.min(
+		recordingTotalReps,
+		Math.floor((recordingSecond - 1) / recordingRepIntervalSeconds) + 1,
+	);
 	const [newWord, setNewWord] = useState("");
 
 	const handleStart = () => {
@@ -325,8 +335,8 @@ function CustomWordRecorder({
 			<div className="flex flex-col gap-2.5 pt-3">
 				<p className="text-neutral-400 text-xs leading-relaxed">
 					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 등록해보세요. "학습 시작"을 누르면{" "}
-					{recordingTotalSeconds}초 동안 1초에 한 번씩 그 단어의 동작을 반복해주시면 자동으로 나눠서
-					저장합니다.
+					{recordingTotalSeconds}초 동안 {recordingRepIntervalSeconds}초에 한 번씩 그 단어의 동작을
+					반복해주시면(총 {recordingTotalReps}번) 자동으로 나눠서 저장합니다.
 				</p>
 				<div className="flex items-center gap-2">
 					<Input
@@ -361,17 +371,20 @@ function CustomWordRecorder({
 				{isRecording && (
 					<div className="flex flex-col gap-1.5">
 						<div className="flex items-center justify-between text-xs">
-							<span className="font-medium text-blue-300">1초에 한 번씩 동작을 반복해주세요</span>
+							<span className="font-medium text-blue-300">
+								{recordingRepIntervalSeconds}초에 한 번씩 동작을 반복해주세요
+							</span>
 							<span className="font-mono text-blue-300/70 tabular-nums">
-								{recordingSecond}/{recordingTotalSeconds}
+								{currentRep}/{recordingTotalReps}
 							</span>
 						</div>
-						{/* Cadence bar: one segment per second, the current beat pulses as the cue
-						    for "repeat the gesture now" rather than making the signer read a number. */}
+						{/* Cadence bar: one segment per rep (not per second) -- the current beat
+						    pulses as the cue for "repeat the gesture now" rather than making the
+						    signer read and do math on a raw seconds counter. */}
 						<div className="flex gap-1">
-							{Array.from({ length: recordingTotalSeconds }, (_, i) => {
-								const isPast = i < recordingSecond - 1;
-								const isCurrentBeat = i === recordingSecond - 1;
+							{Array.from({ length: recordingTotalReps }, (_, i) => {
+								const isPast = i < currentRep - 1;
+								const isCurrentBeat = i === currentRep - 1;
 								return (
 									<div
 										// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length beat display, never reordered
@@ -484,6 +497,8 @@ export function SignCaptureView({
 		isRecordingWord,
 		recordingSecond,
 		recordingTotalSeconds,
+		recordingTotalReps,
+		recordingRepIntervalSeconds,
 		recordingResult,
 		toggleCamera,
 		toggleSkeleton,
@@ -606,6 +621,8 @@ export function SignCaptureView({
 				isRecording={isRecordingWord}
 				recordingSecond={recordingSecond}
 				recordingTotalSeconds={recordingTotalSeconds}
+				recordingTotalReps={recordingTotalReps}
+				recordingRepIntervalSeconds={recordingRepIntervalSeconds}
 				recordingResult={recordingResult}
 				onStartRecording={startRecordingReference}
 				onCancelRecording={cancelRecordingReference}
