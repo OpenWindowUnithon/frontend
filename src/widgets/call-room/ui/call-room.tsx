@@ -13,7 +13,7 @@ import type { Room } from "livekit-client";
 import { type Dispatch, type ReactNode, type SetStateAction, useRef, useState } from "react";
 import { type CallMode, type CommunicationMode, sendChatText } from "@/entities/call";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
-import { CaptionList } from "@/features/receive-captions";
+import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
 import { MicToggleButton } from "@/features/toggle-mic";
 import { ActionButton, TextField, TextFieldTextarea } from "@/shared/ui";
@@ -79,6 +79,7 @@ function TextCallHeader({ contactName, seconds }: Pick<CallRoomProps, "contactNa
 
 function TextCall({
 	room,
+	captions,
 	renderControls,
 	draft,
 	setDraft,
@@ -86,6 +87,7 @@ function TextCall({
 	setMessages,
 }: {
 	room: Room;
+	captions: ReturnType<typeof useReceiveCaptions>;
 	renderControls: (focusInput: () => void) => ReactNode;
 	draft: string;
 	setDraft: Dispatch<SetStateAction<string>>;
@@ -124,7 +126,7 @@ function TextCall({
 				aria-live="polite"
 				role="log"
 			>
-				<CaptionList room={room} />
+				<CaptionList captions={captions} />
 				{messages.map((message) => (
 					<div className="flex justify-end" key={message.id}>
 						<div
@@ -329,6 +331,8 @@ export function CallRoom(props: CallRoomProps) {
 	const [communication, setCommunication] = useState(props.communication);
 	const [textDraft, setTextDraft] = useState("");
 	const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
+	const captions = useReceiveCaptions(props.room);
+
 	const endCall = async () => {
 		setEnding(true);
 		setEndError(false);
@@ -341,7 +345,9 @@ export function CallRoom(props: CallRoomProps) {
 			setEnding(false);
 		}
 	};
+
 	if (ended) return <EndedCall {...props} communication={communication} />;
+
 	if (props.mode === "HEARING") {
 		return (
 			<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card">
@@ -391,6 +397,7 @@ export function CallRoom(props: CallRoomProps) {
 			{communication === "TEXT" ? (
 				<TextCall
 					room={props.room}
+					captions={captions}
 					draft={textDraft}
 					setDraft={setTextDraft}
 					messages={textMessages}
@@ -408,9 +415,9 @@ export function CallRoom(props: CallRoomProps) {
 			) : (
 				<div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
 					<section className="rounded-2xl bg-muted px-4 py-3" aria-label="상대방 음성 자막">
-						<CaptionList room={props.room} />
+						<CaptionList captions={captions} />
 					</section>
-					<SignCaptureView room={props.room} />
+					<SignCaptureView room={props.room} captions={captions} />
 				</div>
 			)}
 		</main>

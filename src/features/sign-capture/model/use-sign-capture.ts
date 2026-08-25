@@ -6,8 +6,9 @@ import type {
 import type { Room } from "livekit-client";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
+import type { CaptionType } from "@/entities/caption";
 import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
-import { composeSignSentence } from "../api/sign-api";
+import { type ConversationTurn, composeSignSentence } from "../api/sign-api";
 import { recognizeArmPoseSign } from "./arm-pose-recognizer";
 import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
@@ -49,6 +50,8 @@ const CONSECUTIVE_REQUIRED = 2;
 const NO_SIGN_STREAK_TO_RESET = 5;
 const UTTERANCE_PAUSE_MS = 3000;
 const MOTION_VELOCITY_THRESHOLD = 0.12;
+// How many prior turns (both sides combined) to send as context with each compose call.
+const MAX_HISTORY_TURNS = 12;
 
 function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
@@ -169,7 +172,10 @@ function calculateInstantVelocity(
  * 2. During stillness / settled (v <= threshold): Evaluates static gestures & poses immediately with zero latency.
  * 3. Accumulates glosses and converts them to natural sentences via LLM translation.
  */
-export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
+export function useSignCapture(
+	room: Room | null = null,
+	captions: CaptionType[] = [],
+): UseSignCaptureReturn {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
@@ -202,6 +208,11 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	// Word buffer & Utterance state for LLM translation
 	const wordBufferRef = useRef<string[]>([]);
 	const utteranceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Conversation history for LLM context: this side's own composed sentences plus the
+	// other side's final captions, in chronological order.
+	const historyRef = useRef<ConversationTurn[]>([]);
+	const processedCaptionIdsRef = useRef<Set<string>>(new Set());
 
 	const [isCameraActive, setIsCameraActive] = useState(true);
 	const [cameraError, setCameraError] = useState(false);
@@ -295,6 +306,18 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		};
 	}, [startCamera, stopCamera]);
 
+	// Records each newly-finalized caption (the HEARING side's speech) into the shared
+	// history so the next compose call has it as context. Interim captions are skipped —
+	// only the final text for a given segment id is recorded, once.
+	useEffect(() => {
+		for (const caption of captions) {
+			if (!caption.final || processedCaptionIdsRef.current.has(caption.id)) continue;
+			processedCaptionIdsRef.current.add(caption.id);
+			const turn: ConversationTurn = { speaker: "HEARING", text: caption.text };
+			historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
+		}
+	}, [captions]);
+
 	// Debounced LLM translation of word sequence. Fires UTTERANCE_PAUSE_MS after the last
 	// confirmed word; clears the buffer immediately so a word signed while this request is
 	// in flight starts a fresh utterance instead of being resent with the old one.
@@ -307,9 +330,14 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 			if (words.length === 0) return;
 
 			setIsComposing(true);
-			composeSignSentence(words)
+			// Snapshot history before this turn -- it must not include the sentence this
+			// call is about to produce.
+			const historyForThisTurn = historyRef.current;
+			composeSignSentence(words, historyForThisTurn)
 				.then((sentence) => {
 					setComposedSentence(sentence);
+					const turn: ConversationTurn = { speaker: "DEAF", text: sentence };
+					historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
 					if (room) {
 						sendChatText(room, sentence);
 					}
@@ -317,6 +345,8 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 				.catch(() => {
 					const fallback = words.join(" ");
 					setComposedSentence(fallback);
+					const turn: ConversationTurn = { speaker: "DEAF", text: fallback };
+					historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
 					if (room) {
 						sendChatText(room, fallback);
 					}
