@@ -1,6 +1,48 @@
 import { apiClient } from "@/shared/api";
-import type { CallMode, JoinResult, StatusResult } from "../model/types";
-import { joinResultSchema, statusResultSchema } from "../model/types";
+import type {
+	CallMode,
+	IncomingCall,
+	JoinResult,
+	OutgoingCall,
+	StatusResult,
+} from "../model/types";
+import {
+	incomingCallSchema,
+	joinResultSchema,
+	outgoingCallSchema,
+	statusResultSchema,
+} from "../model/types";
+
+export async function registerPhone(phoneNumber: string, participantKey: string): Promise<string> {
+	const { data } = await apiClient.put(
+		"/api/calls/phone-registration",
+		{ phoneNumber },
+		{ headers: { "X-Participant-Key": participantKey } },
+	);
+	return String(data.phoneNumber);
+}
+
+export async function createOutgoingCall(
+	callerPhone: string,
+	calleePhone: string,
+	mode: CallMode,
+	participantKey: string,
+	creatorKey: string,
+): Promise<OutgoingCall> {
+	const { data } = await apiClient.post(
+		"/api/calls/outgoing",
+		{ callerPhone, calleePhone, mode },
+		{ headers: { "X-Participant-Key": participantKey, "X-Creator-Key": creatorKey } },
+	);
+	return outgoingCallSchema.parse(data);
+}
+
+export async function getIncomingCall(participantKey: string): Promise<IncomingCall | null> {
+	const response = await apiClient.get("/api/calls/incoming", {
+		headers: { "X-Participant-Key": participantKey },
+	});
+	return response.status === 204 || !response.data ? null : incomingCallSchema.parse(response.data);
+}
 
 /** Idempotent per creator key — same key + roomCode returns the existing call instead of erroring. */
 export async function createCall(roomCode: string, creatorKey: string): Promise<void> {

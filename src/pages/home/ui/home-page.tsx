@@ -5,10 +5,17 @@ import {
 	IconPhoneFill,
 } from "@karrotmarket/react-monochrome-icon";
 import { Icon } from "@seed-design/react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import type { CommunicationMode } from "@/entities/call";
-import { ActionButton, SegmentedControl, SegmentedControlItem } from "@/shared/ui";
+import { useEffect, useState } from "react";
+import {
+	type CommunicationMode,
+	createOutgoingCall,
+	getIncomingCall,
+	registerPhone,
+} from "@/entities/call";
+import { setSessionKey } from "@/features/join-call";
+import { ActionButton, Input, SegmentedControl, SegmentedControlItem } from "@/shared/ui";
 
 const KEYS = [
 	["1", ""],
@@ -31,35 +38,122 @@ function formatPhoneNumber(value: string) {
 	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
 }
 
-function createRoomCode() {
-	return `call-${crypto.randomUUID().replaceAll("-", "")}`;
+function getDeviceKey() {
+	const key = "phone-device-key";
+	const existing = localStorage.getItem(key);
+	if (existing) return existing;
+	const created = crypto.randomUUID();
+	localStorage.setItem(key, created);
+	return created;
 }
 
 export function HomePage() {
 	const navigate = useNavigate();
+	const [deviceKey] = useState(getDeviceKey);
+	const [myPhone, setMyPhone] = useState(() => localStorage.getItem("my-phone") ?? "");
 	const [digits, setDigits] = useState("");
 	const [communication, setCommunication] = useState<CommunicationMode>("TEXT");
-	const canCall = digits.length >= 8;
+	const canCall = digits.length >= 10 && myPhone.length >= 10;
 	const phone = formatPhoneNumber(digits);
+	const normalizedMyPhone = myPhone.replace(/\D/g, "").slice(0, 11);
 
-	const startCall = () => {
-		if (!canCall) return;
+	const registration = useMutation({
+		mutationFn: () => registerPhone(normalizedMyPhone, deviceKey),
+		onSuccess: (registeredPhone) => {
+			localStorage.setItem("my-phone", registeredPhone);
+			setMyPhone(registeredPhone);
+		},
+	});
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: restore the persisted identity only on mount
+	useEffect(() => {
+		if (normalizedMyPhone.length >= 10) registration.mutate();
+	}, []);
+
+	const incoming = useQuery({
+		queryKey: ["incoming-call", deviceKey],
+		queryFn: () => getIncomingCall(deviceKey),
+		enabled: normalizedMyPhone.length >= 10 && !registration.isPending,
+		refetchInterval: 1_500,
+		refetchIntervalInBackground: true,
+		staleTime: 0,
+		retry: 1,
+	});
+
+	useEffect(() => {
+		const call = incoming.data;
+		if (!call) return;
+		setSessionKey("participant", call.roomCode, deviceKey);
 		navigate({
 			to: "/call",
 			search: {
-				room: createRoomCode(),
-				mode: "DEAF",
+				room: call.roomCode,
+				mode: call.callerMode === "DEAF" ? "HEARING" : "DEAF",
 				communication,
-				contactName: phone,
-				phone,
+				contactName: formatPhoneNumber(call.callerPhone),
+				phone: formatPhoneNumber(call.callerPhone),
 			},
 		});
+	}, [incoming.data, deviceKey, navigate, communication]);
+
+	const outgoing = useMutation({
+		mutationFn: async () => {
+			await registerPhone(normalizedMyPhone, deviceKey);
+			const creatorKey = crypto.randomUUID();
+			const call = await createOutgoingCall(
+				normalizedMyPhone,
+				digits,
+				"DEAF",
+				deviceKey,
+				creatorKey,
+			);
+			setSessionKey("creator", call.roomCode, creatorKey);
+			setSessionKey("participant", call.roomCode, deviceKey);
+			return call;
+		},
+		onSuccess: (call) => {
+			navigate({
+				to: "/call",
+				search: {
+					room: call.roomCode,
+					mode: "DEAF",
+					communication,
+					contactName: phone,
+					phone,
+				},
+			});
+		},
+	});
+
+	const startCall = () => {
+		if (!canCall) return;
+		outgoing.mutate();
 	};
 
 	return (
 		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
-			<header className="flex h-11 items-center justify-center">
+			<header className="flex min-h-11 flex-col items-center justify-center gap-2 py-3">
 				<h1 className="sr-only">전화 키패드</h1>
+				<div className="flex w-full items-center gap-2">
+					<Input
+						aria-label="내 전화번호"
+						placeholder="내 전화번호"
+						value={formatPhoneNumber(normalizedMyPhone)}
+						onChange={(event) => setMyPhone(event.target.value.replace(/\D/g, "").slice(0, 11))}
+					/>
+					<ActionButton
+						size="small"
+						disabled={normalizedMyPhone.length < 10 || registration.isPending}
+						onClick={() => registration.mutate()}
+					>
+						등록
+					</ActionButton>
+				</div>
+				{(registration.isError || outgoing.isError || incoming.isError) && (
+					<p className="text-xs text-destructive" role="alert">
+						전화번호 등록 또는 연결을 확인해 주세요.
+					</p>
+				)}
 			</header>
 
 			<section className="flex flex-1 flex-col items-center justify-end pb-5">
@@ -113,7 +207,7 @@ export function HomePage() {
 						layout="iconOnly"
 						size="large"
 						className="mx-auto size-16 rounded-full bg-bg-positive-solid text-primary-foreground hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed"
-						disabled={!canCall}
+						disabled={!canCall || outgoing.isPending}
 						onClick={startCall}
 						aria-label="전화 걸기"
 					>
