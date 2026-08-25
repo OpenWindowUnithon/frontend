@@ -298,6 +298,7 @@ function CustomWordRecorder({
 	recordingRepIntervalSeconds,
 	recordingResult,
 	onStartRecording,
+	onFinishNow,
 	onCancelRecording,
 	onRemove,
 }: {
@@ -309,6 +310,7 @@ function CustomWordRecorder({
 	recordingRepIntervalSeconds: number;
 	recordingResult: { ok: boolean; message: string } | null;
 	onStartRecording: (word: string) => boolean;
+	onFinishNow: () => void;
 	onCancelRecording: () => void;
 	onRemove: (word: string) => void;
 }) {
@@ -347,14 +349,23 @@ function CustomWordRecorder({
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
 					{isRecording ? (
-						<Button
-							size="sm"
-							variant="outline"
-							onClick={onCancelRecording}
-							className="shrink-0 gap-1 border-red-500/40 text-red-300 hover:bg-red-500/10"
-						>
-							취소
-						</Button>
+						<>
+							<Button
+								size="sm"
+								onClick={onFinishNow}
+								className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
+							>
+								완료(지금까지 저장)
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={onCancelRecording}
+								className="shrink-0 gap-1 border-red-500/40 text-red-300 hover:bg-red-500/10"
+							>
+								취소(저장 안 함)
+							</Button>
+						</>
 					) : (
 						<Button
 							size="sm"
@@ -396,6 +407,10 @@ function CustomWordRecorder({
 								);
 							})}
 						</div>
+						<p className="text-[11px] text-neutral-500">
+							반복이 끝났다면 {recordingTotalSeconds}초를 다 기다리지 않고 "완료(지금까지 저장)"를
+							눌러도 그때까지 녹화된 반복이 저장됩니다.
+						</p>
 					</div>
 				)}
 
@@ -504,6 +519,7 @@ export function SignCaptureView({
 		toggleSkeleton,
 		clearHistory,
 		startRecordingReference,
+		finishRecordingNow,
 		cancelRecordingReference,
 		removeReference,
 	} = useSignCapture(room, captions);
@@ -625,6 +641,7 @@ export function SignCaptureView({
 				recordingRepIntervalSeconds={recordingRepIntervalSeconds}
 				recordingResult={recordingResult}
 				onStartRecording={startRecordingReference}
+				onFinishNow={finishRecordingNow}
 				onCancelRecording={cancelRecordingReference}
 				onRemove={removeReference}
 			/>

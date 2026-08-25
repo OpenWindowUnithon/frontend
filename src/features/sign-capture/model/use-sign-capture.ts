@@ -62,6 +62,7 @@ export interface UseSignCaptureReturn {
 	toggleSkeleton: () => void;
 	clearHistory: () => void;
 	startRecordingReference: (word: string) => boolean;
+	finishRecordingNow: () => void;
 	cancelRecordingReference: () => void;
 	removeReference: (word: string) => void;
 }
@@ -540,10 +541,13 @@ export function useSignCapture(
 		handleLandmarkerResult,
 	);
 
-	// Splits the just-recorded continuous take into one reference sample per second (bucketed
-	// by elapsed time, not frame count, so it's robust to frame-rate jitter) and replaces the
-	// word's entire reference set with them -- a full 10s take is meant to supersede whatever
-	// was recorded before, not accumulate alongside it.
+	// Splits the just-recorded continuous take into one reference sample per rep (bucketed by
+	// elapsed time, not frame count, so it's robust to frame-rate jitter) and replaces the
+	// word's entire reference set with them -- a take is meant to supersede whatever was
+	// recorded before, not accumulate alongside it. Also callable early (finishRecordingNow)
+	// so the signer isn't locked into waiting the full RECORD_TOTAL_SECONDS if they've already
+	// done enough reps -- whatever reps completed so far still get saved, unlike
+	// cancelRecordingReference which discards everything.
 	const finishRecordingReference = useCallback(() => {
 		if (recordingTickTimerRef.current) clearInterval(recordingTickTimerRef.current);
 		if (recordingEndTimerRef.current) clearTimeout(recordingEndTimerRef.current);
@@ -656,6 +660,7 @@ export function useSignCapture(
 		toggleSkeleton,
 		clearHistory,
 		startRecordingReference,
+		finishRecordingNow: finishRecordingReference,
 		cancelRecordingReference,
 		removeReference,
 	};
