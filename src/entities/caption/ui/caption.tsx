@@ -6,7 +6,7 @@ export function Caption({ caption }: { caption: CaptionType }) {
 	return (
 		<p
 			className={cn(
-				"rounded-lg bg-muted px-4 py-2 text-lg transition-opacity",
+				"w-fit max-w-[85%] whitespace-pre-wrap break-words rounded-3xl rounded-tl-lg bg-muted px-5 py-3.5 text-lg font-medium leading-7 transition-opacity",
 				!caption.final && "opacity-60",
 			)}
 		>

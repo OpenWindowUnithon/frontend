@@ -47,6 +47,16 @@ export {
 	DropdownMenuTrigger,
 } from "./dropdown-menu";
 export { Input } from "./input";
+export { ActionButton, type ActionButtonProps } from "./seed-design/ui/action-button";
+export {
+	Avatar as SeedAvatar,
+	AvatarBadge as SeedAvatarBadge,
+} from "./seed-design/ui/avatar";
+export { IdentityPlaceholder } from "./seed-design/ui/identity-placeholder";
+export {
+	SegmentedControl,
+	SegmentedControlItem,
+} from "./seed-design/ui/segmented-control";
 export {
 	Snackbar,
 	SnackbarAvoidOverlap,
@@ -54,6 +64,11 @@ export {
 	SnackbarProvider,
 	useSnackbarAdapter,
 } from "./seed-design/ui/snackbar";
+export {
+	TextField,
+	TextFieldInput,
+	TextFieldTextarea,
+} from "./seed-design/ui/text-field";
 export {
 	Select,
 	SelectContent,

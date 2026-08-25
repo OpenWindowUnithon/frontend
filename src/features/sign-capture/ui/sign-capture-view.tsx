@@ -44,10 +44,20 @@ const COMBINED_VOCABULARY_LIST = [
 		desc: "엄지손가락을 세워 긍정 표현",
 		type: "제스처 / 정적",
 	},
-	{ label: "확인 / OK", icon: "👌", desc: "엄지와 검지로 동그란 원 만들기", type: "제스처 / 정적" },
+	{
+		label: "확인 / OK",
+		icon: "👌",
+		desc: "엄지와 검지로 동그란 원 만들기",
+		type: "제스처 / 정적",
+	},
 	{ label: "승리 / 2", icon: "✌️", desc: "V자 손가락 펼치기", type: "제스처 / 정적" },
 	{ label: "부탁 / 죄송", icon: "🙇‍♂️", desc: "가슴 앞에서 두 손 모으기", type: "제스처 / 정적" },
-	{ label: "1, 3, 4 (지화 숫자)", icon: "☝️", desc: "손가락 개수로 숫자 표현", type: "지화 / 숫자" },
+	{
+		label: "1, 3, 4 (지화 숫자)",
+		icon: "☝️",
+		desc: "손가락 개수로 숫자 표현",
+		type: "지화 / 숫자",
+	},
 ];
 
 function CameraStatusBar({
