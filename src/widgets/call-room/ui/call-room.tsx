@@ -465,18 +465,21 @@ export function CallRoom(props: CallRoomProps) {
 					)}
 				/>
 			) : (
-				<div className="flex min-h-0 flex-1 flex-col">
-					<section className="mx-4 mt-3 shrink-0" aria-label="내 카메라">
+				<div className="relative flex min-h-0 flex-1 flex-col">
+					<SignChat captions={captions} messages={signMessages} />
+					<div
+						className="absolute right-4 top-3 aspect-[3/4] w-24 overflow-hidden rounded-2xl border border-border shadow-lg sm:w-28"
+						aria-hidden
+					>
 						<SignCaptureView
 							room={props.room}
 							captions={captions}
-							compact
+							pip
 							onSentence={(text) =>
 								setSignMessages((items) => [...items, { id: Date.now(), text }])
 							}
 						/>
-					</section>
-					<SignChat captions={captions} messages={signMessages} />
+					</div>
 				</div>
 			)}
 		</main>

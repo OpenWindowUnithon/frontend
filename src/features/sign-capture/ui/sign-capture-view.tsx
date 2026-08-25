@@ -383,18 +383,24 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
  * vocabulary guide, sentence banner) meant for the standalone camera test page — used when
  * this is embedded in an actual call, where a caller supplies `onSentence` and renders the
  * composed sentences in the call's own chat feed instead.
+ *
+ * `pip` goes further: it's the bare mirrored video feed with no overlay chrome at all (no
+ * status bar, toggle buttons, or skeleton/HUD), meant to float as a small picture-in-picture
+ * window over the call's chat so the chat gets the full screen.
  */
 export function SignCaptureView({
 	room = null,
 	captions = [],
 	className = "",
 	compact = false,
+	pip = false,
 	onSentence,
 }: {
 	room?: Room | null;
 	captions?: CaptionType[];
 	className?: string;
 	compact?: boolean;
+	pip?: boolean;
 	onSentence?: (text: string) => void;
 }) {
 	const {
@@ -421,6 +427,29 @@ export function SignCaptureView({
 	} = useSignCapture(room, captions, onSentence);
 
 	const [showGuide, setShowGuide] = useState(false);
+
+	if (pip) {
+		return (
+			<div className={`relative h-full w-full overflow-hidden bg-neutral-950 ${className}`}>
+				<video
+					ref={videoRef}
+					autoPlay
+					muted
+					playsInline
+					className={`h-full w-full object-cover transition-opacity duration-300 ${
+						isCameraActive ? "scale-x-[-1] opacity-100" : "opacity-0"
+					}`}
+				>
+					<track kind="captions" />
+				</video>
+				{(!isCameraActive || cameraError) && (
+					<div className="absolute inset-0 flex items-center justify-center bg-neutral-950/90">
+						<CameraOff className="h-6 w-6 text-neutral-600" aria-hidden />
+					</div>
+				)}
+			</div>
+		);
+	}
 
 	return (
 		<div className={`flex w-full max-w-2xl flex-col items-center gap-3 ${className}`}>
