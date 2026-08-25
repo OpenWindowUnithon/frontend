@@ -1,27 +1,24 @@
 import { Badge } from "@seed-design/react";
 import type { Room } from "livekit-client";
 import { useState } from "react";
-import { ActionButton, TextField, TextFieldInput } from "@/shared/ui";
+import { Button, Input } from "@/shared/ui";
 import { useSignCapture } from "../model/use-sign-capture";
 
 /** Camera preview for the signer — runs Hand Landmarker locally and shows the last recognized phrase. */
 export function SignCaptureView({ room }: { room: Room | null }) {
-	const { videoRef, recognizedText, setRecognizedText, sendRecognizedText, cameraError } =
+	const { videoRef, recognizedText, cameraError, references, recordReference, removeReference } =
 		useSignCapture(room);
-	const [sending, setSending] = useState(false);
-	const [error, setError] = useState(false);
-	const text = recognizedText ?? "";
-	const send = async () => {
-		setSending(true);
-		setError(false);
-		try {
-			await sendRecognizedText(text);
-		} catch {
-			setError(true);
-		} finally {
-			setSending(false);
-		}
-	};
+	const [newWord, setNewWord] = useState("");
+	const [recordHint, setRecordHint] = useState<string | null>(null);
+
+	function handleRecord() {
+		const recorded = recordReference(newWord);
+		setRecordHint(
+			recorded
+				? `"${newWord.trim()}" 저장됨`
+				: "아직 카메라 준비 중이에요. 잠시 후 다시 눌러주세요.",
+		);
+	}
 
 	return (
 		<div className="flex w-full flex-col gap-4">
@@ -38,35 +35,47 @@ export function SignCaptureView({ room }: { room: Room | null }) {
 				<Badge
 					className="absolute bottom-4 left-4"
 					variant="solid"
-					tone={cameraError ? "critical" : text ? "positive" : "neutral"}
+					tone={cameraError ? "critical" : recognizedText ? "positive" : "neutral"}
 				>
-					{cameraError ? "카메라를 확인해 주세요" : text ? "인식 완료" : "인식 중"}
+					{cameraError ? "카메라를 확인해 주세요" : recognizedText ? "인식 완료" : "인식 중"}
 				</Badge>
 			</div>
-			{(text || error) && (
-				<div className="rounded-3xl bg-muted p-4">
-					<TextField
-						label="인식된 문장"
-						size="large"
-						value={text}
-						onValueChange={({ value }) => setRecognizedText(value)}
-						invalid={error}
-						errorMessage="전달하지 못했어요. 다시 시도해 주세요."
-					>
-						<TextFieldInput />
-					</TextField>
-					<ActionButton
-						variant="neutralSolid"
-						size="large"
-						className="mt-3 w-full"
-						loading={sending}
-						disabled={!text.trim() || sending}
-						onClick={send}
-					>
-						{sending ? "전달 중…" : error ? "다시 전달" : "전달"}
-					</ActionButton>
-				</div>
+			{recognizedText && (
+				<p className="rounded-2xl bg-muted px-4 py-3 text-lg font-semibold">{recognizedText}</p>
 			)}
+
+			<details className="w-full rounded-2xl bg-muted px-4 py-3 text-sm">
+				<summary className="cursor-pointer font-medium text-muted-foreground">단어 등록</summary>
+				<div className="flex flex-col gap-2 pt-2">
+					<p className="text-muted-foreground text-xs">
+						모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 여러 번 반복하고 매번 "이 동작
+						저장"을 누르면, 다음부터 인식됩니다. 영상은 저장되지 않고 이 브라우저에만 남습니다.
+					</p>
+					<div className="flex gap-2">
+						<Input
+							placeholder="예: 병원"
+							value={newWord}
+							onChange={(event) => setNewWord(event.target.value)}
+						/>
+						<Button size="md" disabled={!newWord.trim()} onClick={handleRecord}>
+							이 동작 저장
+						</Button>
+					</div>
+					{recordHint && <p className="text-muted-foreground text-xs">{recordHint}</p>}
+					<ul className="flex flex-col gap-1">
+						{Object.entries(references).map(([word, count]) => (
+							<li key={word} className="flex items-center justify-between gap-2">
+								<span>
+									{word} ({count}개)
+								</span>
+								<Button size="sm" onClick={() => removeReference(word)}>
+									삭제
+								</Button>
+							</li>
+						))}
+					</ul>
+				</div>
+			</details>
 		</div>
 	);
 }
