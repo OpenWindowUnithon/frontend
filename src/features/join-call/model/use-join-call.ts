@@ -46,6 +46,15 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
 const STATUS_POLL_INTERVAL_MS = 1_500;
 const RETRY_DELAY_MS = 5_000;
 const MAX_RETRIES = 6;
+// How many times (and how far apart) to re-check call status right after a LiveKit disconnect
+// before giving up and showing the "reconnecting" UI. The disconnect notification can arrive
+// over the realtime connection before the call-status row finishes updating server-side, so a
+// single immediate check can still read a stale ACTIVE status for a call the other side just
+// ended -- that's the "다시 연결 중..." flash this session would otherwise show for an
+// already-finished call. A couple of quick retries absorbs that race; a real network drop
+// still falls through to the normal reconnect flow after this, just ~1s later.
+const END_CHECK_ATTEMPTS = 3;
+const END_CHECK_RETRY_DELAY_MS = 500;
 
 function hasLiveKitCredentials(
 	result: StatusResult,
@@ -181,6 +190,37 @@ export function useJoinCall() {
 		}
 	}
 
+	// Repeatedly checks whether the call has already ended server-side, and calls
+	// markRejected + returns true the moment it finds REJECTED/ENDED. Pulled out of
+	// retryLoop to keep that function's cognitive complexity down. Retries a few times
+	// (END_CHECK_ATTEMPTS) rather than trusting a single read: the LiveKit disconnect
+	// notification can arrive over the realtime connection before the call-status row
+	// finishes updating server-side, so one immediate check can still read a stale ACTIVE
+	// status for a call the other side just ended.
+	async function checkAlreadyEnded(
+		callId: string,
+		participantKey: string,
+		generation: number,
+		wasConnected: boolean,
+		previousRoom: Room | null,
+	): Promise<boolean> {
+		for (let attempt = 0; attempt < END_CHECK_ATTEMPTS && isCurrent(generation); attempt += 1) {
+			try {
+				const result = await getCallStatus(callId, participantKey);
+				if (result.status === "REJECTED" || result.status === "ENDED") {
+					markRejected(false, wasConnected, previousRoom);
+					return true;
+				}
+			} catch {
+				// Status check failed -- keep retrying below.
+			}
+			if (attempt < END_CHECK_ATTEMPTS - 1) {
+				await new Promise((resolve) => setTimeout(resolve, END_CHECK_RETRY_DELAY_MS));
+			}
+		}
+		return false;
+	}
+
 	async function retryLoop(generation: number, wasConnected = false): Promise<void> {
 		const params = paramsRef.current;
 		const callId = stateRef.current.callId;
@@ -192,19 +232,18 @@ export function useJoinCall() {
 		// blank JoinCall screen.
 		const previousRoom = stateRef.current.room;
 
-		// Check whether the call already ended server-side (the other side hung up)
-		// before showing a "reconnecting" UI -- a dropped LiveKit connection after the
-		// other party ends the call looks identical to a network blip otherwise, and
-		// this side would flash "다시 연결 중..." for an already-finished call.
-		try {
-			const result = await getCallStatus(callId, params.participantKey);
-			if (result.status === "REJECTED" || result.status === "ENDED") {
-				markRejected(false, wasConnected, previousRoom);
-				return;
-			}
-		} catch {
-			// Status check failed -- fall through to the normal reconnect loop below.
-		}
+		// Check whether the call already ended server-side (the other side hung up) before
+		// showing a "reconnecting" UI -- a dropped LiveKit connection after the other party
+		// ends the call looks identical to a network blip otherwise, and this side would
+		// flash "다시 연결 중..." for an already-finished call.
+		const alreadyEnded = await checkAlreadyEnded(
+			callId,
+			params.participantKey,
+			generation,
+			wasConnected,
+			previousRoom,
+		);
+		if (alreadyEnded) return;
 		if (!isCurrent(generation)) return;
 
 		updateState((current) => ({ ...current, room: null, status: "reconnecting" }));
