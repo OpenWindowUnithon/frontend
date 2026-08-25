@@ -14,6 +14,12 @@ export {
 	terminateCall,
 } from "./api/call-api";
 export { sendChatText } from "./api/call-chat";
+export type { AiVoice, AiVoiceSpeed, CallPreferences } from "./model/call-preferences";
+export {
+	DEFAULT_CALL_PREFERENCES,
+	getCallPreferences,
+	setCallPreferences,
+} from "./model/call-preferences";
 export { getDeviceKey, getMyPhone, setMyPhone } from "./model/device-identity";
 export {
 	type CallMode,

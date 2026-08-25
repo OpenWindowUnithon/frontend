@@ -5,6 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
 	createOutgoingCall,
+	getCallPreferences,
 	getDeviceKey,
 	getIncomingCall,
 	getMyPhone,
@@ -40,7 +41,7 @@ export function HomePage() {
 	const [deviceKey] = useState(getDeviceKey);
 	const [myPhone] = useState(getMyPhone);
 	const [digits, setDigits] = useState("");
-	const communication = "TEXT" as const;
+	const [communication] = useState(() => getCallPreferences().defaultCommunication);
 	const phone = formatPhoneNumber(digits);
 	const normalizedMyPhone = myPhone.replace(/\D/g, "").slice(0, 11);
 	const normalizedCalleePhone = /^01\d{8,9}$/.test(digits) ? digits : null;
