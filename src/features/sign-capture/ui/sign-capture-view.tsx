@@ -375,15 +375,27 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 	);
 }
 
-/** Camera preview for the signer — runs Hand & Pose Landmarker locally, recognizing signs from the 30-frame sequence window (LSTM + DTW). */
+/**
+ * Camera preview for the signer — runs Hand & Pose Landmarker locally, recognizing signs from
+ * the 30-frame sequence window (LSTM + DTW).
+ *
+ * `compact` drops the dev-tooling panels (recognition history, custom DTW word recorder,
+ * vocabulary guide, sentence banner) meant for the standalone camera test page — used when
+ * this is embedded in an actual call, where a caller supplies `onSentence` and renders the
+ * composed sentences in the call's own chat feed instead.
+ */
 export function SignCaptureView({
 	room = null,
 	captions = [],
 	className = "",
+	compact = false,
+	onSentence,
 }: {
 	room?: Room | null;
 	captions?: CaptionType[];
 	className?: string;
+	compact?: boolean;
+	onSentence?: (text: string) => void;
 }) {
 	const {
 		videoRef,
@@ -406,14 +418,14 @@ export function SignCaptureView({
 		clearHistory,
 		recordReference,
 		removeReference,
-	} = useSignCapture(room, captions);
+	} = useSignCapture(room, captions, onSentence);
 
 	const [showGuide, setShowGuide] = useState(false);
 
 	return (
 		<div className={`flex w-full max-w-2xl flex-col items-center gap-3 ${className}`}>
 			{/* Camera Feed Container */}
-			<div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl">
+			<div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-border bg-neutral-950 shadow-sm">
 				{/* Video Feed (mirrored for natural interaction) */}
 				<video
 					ref={videoRef}
@@ -471,18 +483,20 @@ export function SignCaptureView({
 							{isCameraActive ? <Camera className="h-4 w-4" /> : <CameraOff className="h-4 w-4" />}
 						</button>
 
-						<button
-							type="button"
-							onClick={() => setShowGuide((prev) => !prev)}
-							title="수어 동작 가이드"
-							className={`flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md transition-colors ${
-								showGuide
-									? "border-blue-400/40 bg-blue-600/80 text-white"
-									: "border-white/10 bg-black/50 text-neutral-400 hover:text-white"
-							}`}
-						>
-							<HelpCircle className="h-4 w-4" />
-						</button>
+						{!compact && (
+							<button
+								type="button"
+								onClick={() => setShowGuide((prev) => !prev)}
+								title="수어 동작 가이드"
+								className={`flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md transition-colors ${
+									showGuide
+										? "border-blue-400/40 bg-blue-600/80 text-white"
+										: "border-white/10 bg-black/50 text-neutral-400 hover:text-white"
+								}`}
+							>
+								<HelpCircle className="h-4 w-4" />
+							</button>
+						)}
 					</div>
 				</div>
 
@@ -503,21 +517,25 @@ export function SignCaptureView({
 				)}
 			</div>
 
-			{/* AI Translated Natural Sentence Banner */}
-			<SentenceResultBanner composedSentence={composedSentence} isComposing={isComposing} />
+			{!compact && (
+				<>
+					{/* AI Translated Natural Sentence Banner */}
+					<SentenceResultBanner composedSentence={composedSentence} isComposing={isComposing} />
 
-			{/* Recognition History Log */}
-			<RecentSignsHistory recentSigns={recentSigns} onClear={clearHistory} />
+					{/* Recognition History Log */}
+					<RecentSignsHistory recentSigns={recentSigns} onClear={clearHistory} />
 
-			{/* Custom DTW Word Recording Component */}
-			<CustomWordRecorder
-				references={references}
-				onRecord={recordReference}
-				onRemove={removeReference}
-			/>
+					{/* Custom DTW Word Recording Component */}
+					<CustomWordRecorder
+						references={references}
+						onRecord={recordReference}
+						onRemove={removeReference}
+					/>
 
-			{/* Supported Gestures Guide Card */}
-			{showGuide && <GesturesGuide onClose={() => setShowGuide(false)} />}
+					{/* Supported Gestures Guide Card */}
+					{showGuide && <GesturesGuide onClose={() => setShowGuide(false)} />}
+				</>
+			)}
 		</div>
 	);
 }

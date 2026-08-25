@@ -24,7 +24,7 @@ import {
 } from "@/entities/call";
 import { Caption } from "@/entities/caption";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
-import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
+import { useReceiveCaptions } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
 import { MicToggleButton } from "@/features/toggle-mic";
 import { ActionButton, TextField, TextFieldTextarea } from "@/shared/ui";
@@ -316,6 +316,65 @@ function EndedCall({ contactName, seconds }: Omit<CallRoomProps, "room" | "mode"
 	);
 }
 
+type SignMessage = { id: number; text: string };
+
+function SignChat({
+	captions,
+	messages,
+}: {
+	captions: ReturnType<typeof useReceiveCaptions>;
+	messages: SignMessage[];
+}) {
+	const bottomRef = useRef<HTMLDivElement>(null);
+	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
+	const captionTimes = useRef(new Map<string, number>());
+	for (const caption of captions) {
+		if (!captionTimes.current.has(caption.id)) captionTimes.current.set(caption.id, Date.now());
+	}
+	const timeline = [
+		...captions.map((caption) => ({
+			kind: "caption" as const,
+			at: captionTimes.current.get(caption.id) ?? 0,
+			caption,
+		})),
+		...messages.map((message) => ({ kind: "message" as const, at: message.id, message })),
+	].sort((left, right) => left.at - right.at);
+	const timelineVersion = `${timeline.length}:${captions.at(-1)?.text ?? ""}`;
+
+	useEffect(() => {
+		if (timelineVersion && autoScroll.current) {
+			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+		}
+	}, [timelineVersion]);
+
+	return (
+		<div
+			className="min-h-40 flex-1 space-y-3 overflow-y-auto px-5 pb-4 pt-4"
+			aria-label="통화 대화"
+			aria-live="polite"
+			role="log"
+		>
+			{timeline.length === 0 && (
+				<p className="text-muted-foreground">수어로 말하면 이곳에 실시간으로 표시돼요.</p>
+			)}
+			{timeline.map((item) =>
+				item.kind === "caption" ? (
+					<Caption caption={item.caption} key={`caption-${item.caption.id}`} />
+				) : (
+					<div className="flex justify-end" key={`message-${item.message.id}`}>
+						<div className="w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-accent px-5 py-3.5 text-accent-foreground">
+							<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
+								{item.message.text}
+							</p>
+						</div>
+					</div>
+				),
+			)}
+			<div ref={bottomRef} />
+		</div>
+	);
+}
+
 function HearingRoom({ room }: { room: Room }) {
 	return (
 		<div className="flex flex-1 flex-col items-center justify-center gap-6 px-5 py-8">
@@ -332,6 +391,7 @@ export function CallRoom(props: CallRoomProps) {
 	const communication = props.communication;
 	const [textDraft, setTextDraft] = useState("");
 	const [textMessages, setTextMessages] = useState<TextMessage[]>([]);
+	const [signMessages, setSignMessages] = useState<SignMessage[]>([]);
 	const captions = useReceiveCaptions(props.room);
 	const endCall = async () => {
 		setEnding(true);
@@ -405,11 +465,18 @@ export function CallRoom(props: CallRoomProps) {
 					)}
 				/>
 			) : (
-				<div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
-					<section className="rounded-2xl bg-muted px-4 py-3" aria-label="상대방 음성 자막">
-						<CaptionList captions={captions} />
+				<div className="flex min-h-0 flex-1 flex-col">
+					<section className="mx-4 mt-3 shrink-0" aria-label="내 카메라">
+						<SignCaptureView
+							room={props.room}
+							captions={captions}
+							compact
+							onSentence={(text) =>
+								setSignMessages((items) => [...items, { id: Date.now(), text }])
+							}
+						/>
 					</section>
-					<SignCaptureView room={props.room} captions={captions} />
+					<SignChat captions={captions} messages={signMessages} />
 				</div>
 			)}
 		</main>

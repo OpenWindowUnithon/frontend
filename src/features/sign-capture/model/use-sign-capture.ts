@@ -129,6 +129,7 @@ function updateCandidateStreak(
 export function useSignCapture(
 	room: Room | null = null,
 	captions: CaptionType[] = [],
+	onSentence?: (text: string) => void,
 ): UseSignCaptureReturn {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -279,6 +280,7 @@ export function useSignCapture(
 					if (room) {
 						sendChatText(room, sentence);
 					}
+					onSentence?.(sentence);
 				})
 				.catch(() => {
 					const fallback = words.join(" ");
@@ -288,12 +290,13 @@ export function useSignCapture(
 					if (room) {
 						sendChatText(room, fallback);
 					}
+					onSentence?.(fallback);
 				})
 				.finally(() => {
 					setIsComposing(false);
 				});
 		}, UTTERANCE_PAUSE_MS);
-	}, [room]);
+	}, [room, onSentence]);
 
 	const commitConfirmedSign = useCallback(
 		(sign: RecognizedSign) => {

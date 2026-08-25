@@ -147,16 +147,7 @@ export function HomePage() {
 			</header>
 
 			<section className="flex flex-1 flex-col items-center justify-end pb-5">
-				<div
-					className="mt-4 flex min-h-24 w-full flex-col items-center justify-center"
-					aria-live="polite"
-				>
-					<p className="min-h-11 text-center text-4xl leading-11 font-light tracking-tight tabular-nums">
-						{phone || "전화번호 입력"}
-					</p>
-				</div>
-
-				<div className="mt-1 grid w-full max-w-[296px] grid-cols-3 gap-x-7 gap-y-3">
+				<div className="mt-4 grid w-full max-w-[296px] grid-cols-3 gap-x-7 gap-y-3">
 					{KEYS.map(([number, letters]) => (
 						<button
 							key={number}
