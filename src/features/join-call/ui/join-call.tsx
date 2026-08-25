@@ -1,6 +1,7 @@
 import { IconPhoneFill, IconPhoneXmarkFill } from "@karrotmarket/react-monochrome-icon";
 import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
+import { hapticTrigger } from "ios-haptics";
 import { useEffect } from "react";
 import type { CallRole } from "@/entities/call";
 import { snackbar } from "@/shared/lib";
@@ -52,6 +53,16 @@ export function JoinCall(props: JoinCallProps) {
 	useEffect(() => {
 		if (props.actionError) snackbar.error("요청을 처리하지 못했어요. 다시 시도해 주세요.");
 	}, [props.actionError]);
+	useEffect(() => {
+		if (props.status !== "ringing" || props.role !== "CALLEE") return;
+		const vibrate = () => navigator.vibrate?.([600, 400, 600, 1_800]);
+		vibrate();
+		const interval = window.setInterval(vibrate, 3_400);
+		return () => {
+			window.clearInterval(interval);
+			navigator.vibrate?.(0);
+		};
+	}, [props.status, props.role]);
 	if (props.status === "connected" || props.status === "ended" || props.status === "idle")
 		return null;
 
@@ -126,6 +137,7 @@ export function JoinCall(props: JoinCallProps) {
 				{incoming && (
 					<div className="grid grid-cols-2 gap-3">
 						<ActionButton
+							ref={hapticTrigger}
 							variant="neutralOutline"
 							size="large"
 							disabled={busy}
@@ -134,6 +146,7 @@ export function JoinCall(props: JoinCallProps) {
 							거절
 						</ActionButton>
 						<ActionButton
+							ref={hapticTrigger}
 							variant="neutralSolid"
 							size="large"
 							className="bg-bg-positive-solid hover:bg-bg-positive-solid-pressed"
