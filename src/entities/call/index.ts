@@ -6,12 +6,15 @@ export {
 	endCall,
 	getCallStatus,
 	getIncomingCall,
+	getRecentCalls,
 	joinCall,
 	registerPhone,
 	rejectCall,
 	sendHeartbeat,
+	terminateCall,
 } from "./api/call-api";
 export { sendChatText } from "./api/call-chat";
+export { getDeviceKey, getMyPhone, setMyPhone } from "./model/device-identity";
 export {
 	type CallMode,
 	type CallParams,
@@ -30,6 +33,8 @@ export {
 	type OutgoingCall,
 	outgoingCallSchema,
 	phoneRegistrationSchema,
+	type RecentCall,
+	recentCallSchema,
 	type StatusResult,
 	statusResultSchema,
 } from "./model/types";
