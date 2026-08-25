@@ -336,11 +336,6 @@ function CustomWordRecorder({
 						disabled={isRecording}
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
-					{isRecording && (
-						<span className="flex h-9 shrink-0 items-center justify-center rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 font-mono font-semibold text-blue-300 text-xs tabular-nums">
-							{recordingSecond}/{recordingTotalSeconds}초
-						</span>
-					)}
 					{isRecording ? (
 						<Button
 							size="sm"
@@ -364,10 +359,31 @@ function CustomWordRecorder({
 				</div>
 
 				{isRecording && (
-					<p className="font-medium text-blue-300 text-xs">
-						1초에 한 번씩 동작을 반복해주세요 — {recordingTotalSeconds}초가 지나면 자동으로
-						학습됩니다.
-					</p>
+					<div className="flex flex-col gap-1.5">
+						<div className="flex items-center justify-between text-xs">
+							<span className="font-medium text-blue-300">1초에 한 번씩 동작을 반복해주세요</span>
+							<span className="font-mono text-blue-300/70 tabular-nums">
+								{recordingSecond}/{recordingTotalSeconds}
+							</span>
+						</div>
+						{/* Cadence bar: one segment per second, the current beat pulses as the cue
+						    for "repeat the gesture now" rather than making the signer read a number. */}
+						<div className="flex gap-1">
+							{Array.from({ length: recordingTotalSeconds }, (_, i) => {
+								const isPast = i < recordingSecond - 1;
+								const isCurrentBeat = i === recordingSecond - 1;
+								return (
+									<div
+										// biome-ignore lint/suspicious/noArrayIndexKey: fixed-length beat display, never reordered
+										key={i}
+										className={`h-2 flex-1 rounded-full transition-colors ${
+											isPast || isCurrentBeat ? "bg-blue-400" : "bg-neutral-700"
+										} ${isCurrentBeat ? "animate-pulse" : ""}`}
+									/>
+								);
+							})}
+						</div>
+					</div>
 				)}
 
 				{!isRecording && recordingResult && (
