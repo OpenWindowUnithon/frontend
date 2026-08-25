@@ -4,12 +4,12 @@ import { JoinCall, useJoinCall } from "@/features/join-call";
 import { CallRoom } from "@/widgets/call-room";
 
 export function CallPage() {
-	const { role, room: roomName } = useSearch({ from: "/call" });
+	const { mode, room: roomCode } = useSearch({ from: "/call" });
 	const { room, status, join } = useJoinCall();
 
 	useEffect(() => {
-		join(roomName, `${role}-${crypto.randomUUID().slice(0, 8)}`);
-	}, [roomName, role, join]);
+		join(roomCode, mode, mode === "DEAF");
+	}, [roomCode, mode, join]);
 
 	if (status !== "connected" || !room) {
 		return (
@@ -19,5 +19,5 @@ export function CallPage() {
 		);
 	}
 
-	return <CallRoom role={role} room={room} />;
+	return <CallRoom mode={mode} room={room} />;
 }

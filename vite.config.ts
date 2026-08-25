@@ -29,5 +29,12 @@ export default defineConfig({
 	},
 	server: {
 		port: 3000,
+		// Backend has no CORS config yet — proxying same-origin sidesteps that for
+		// local dev. Leave VITE_API_BASE_URL empty locally to use this; set it to
+		// the real deployed backend URL for prod (which still needs CORS fixed
+		// there, since this proxy only exists in `vite dev`).
+		proxy: {
+			"/api": "http://localhost:8080",
+		},
 	},
 });

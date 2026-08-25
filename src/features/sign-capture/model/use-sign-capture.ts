@@ -2,7 +2,7 @@ import type { HandLandmarkerResult } from "@mediapipe/tasks-vision";
 import { sample } from "es-toolkit";
 import type { Room } from "livekit-client";
 import { useEffect, useRef, useState } from "react";
-import { publishCaption } from "@/entities/caption";
+import { sendChatText } from "@/entities/call";
 import { useHandLandmarker } from "@/shared/lib";
 
 const MOCK_PHRASES = [
@@ -52,12 +52,7 @@ export function useSignCapture(room: Room | null) {
 
 		const text = mockInferSign();
 		setRecognizedText(text);
-		publishCaption(room, {
-			id: crypto.randomUUID(),
-			text,
-			sourceRole: "signer",
-			timestamp: Date.now(),
-		});
+		sendChatText(room, text);
 	});
 
 	return { videoRef, recognizedText, cameraError };

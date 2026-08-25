@@ -1,14 +1,10 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-	VITE_API_BASE_URL: z.string().url().default("http://localhost:8787"),
-	VITE_LIVEKIT_URL: z.string().url().default("wss://example.livekit.cloud"),
-	// Env vars are always strings, so a plain z.coerce.boolean() would treat
-	// the string "false" as truthy — enum + transform avoids that footgun.
-	VITE_USE_MOCK: z
-		.enum(["true", "false"])
-		.default("false")
-		.transform((v) => v === "true"),
+	// Empty string is valid — apiClient then targets the current origin, which
+	// `vite dev`'s /api proxy (vite.config.ts) forwards to the backend without
+	// hitting its (currently missing) CORS config.
+	VITE_API_BASE_URL: z.union([z.string().url(), z.literal("")]).default(""),
 });
 
 /** Validated env vars. Throws at startup if `.env` is missing or malformed. */

@@ -1,25 +1,25 @@
-import { Room, RoomEvent } from "livekit-client";
+import { Room } from "livekit-client";
 
-/** Connects to a LiveKit room for presence + the data channel only — no audio/video tracks are published. */
+/** Connects to a LiveKit room. The backend's Python agent joins automatically (see room dispatch config). */
 export async function connectRoom(url: string, token: string): Promise<Room> {
 	const room = new Room();
 	await room.connect(url, token);
 	return room;
 }
 
-/** Broadcasts a JSON-serializable payload to every other participant in the room. */
-export function sendRoomData(room: Room, payload: unknown) {
-	const bytes = new TextEncoder().encode(JSON.stringify(payload));
-	room.localParticipant.publishData(bytes, { reliable: true });
+/** Sends text on a topic via LiveKit's text stream API (not a raw data channel — matches the backend agent's contract). */
+export function sendRoomText(room: Room, topic: string, text: string) {
+	return room.localParticipant.sendText(text, { topic });
 }
 
-/** Subscribes to JSON payloads sent via {@link sendRoomData}. Returns an unsubscribe function. */
-export function onRoomData(room: Room, handler: (payload: unknown) => void): () => void {
-	const listener = (payload: Uint8Array) => {
-		handler(JSON.parse(new TextDecoder().decode(payload)));
-	};
-	room.on(RoomEvent.DataReceived, listener);
-	return () => {
-		room.off(RoomEvent.DataReceived, listener);
-	};
+/** Subscribes to text sent on a topic. Returns an unsubscribe function. */
+export function onRoomText(
+	room: Room,
+	topic: string,
+	handler: (text: string, attributes: Record<string, string>) => void,
+): () => void {
+	room.registerTextStreamHandler(topic, async (reader) => {
+		handler(await reader.readAll(), reader.info.attributes ?? {});
+	});
+	return () => room.unregisterTextStreamHandler(topic);
 }

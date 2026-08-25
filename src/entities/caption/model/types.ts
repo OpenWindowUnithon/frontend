@@ -1,15 +1,14 @@
 import { z } from "zod";
 
 /**
- * A single translated message flowing over the call's data channel — either a
- * recognized sign or a voice transcript. `sourceRole` intentionally re-states
- * entities/call's role enum rather than importing it — entities may not
- * cross-import each other (see steiger's fsd/no-cross-imports).
+ * One caption from the backend agent's live transcription of the HEARING
+ * participant's speech (`lk.transcription` topic). `id` is the agent's
+ * segment id — the same id repeats with updated `text` while interim, then
+ * arrives once more with `final: true`.
  */
 export const captionSchema = z.object({
 	id: z.string(),
-	text: z.string().min(1),
-	sourceRole: z.enum(["signer", "listener"]),
-	timestamp: z.number(),
+	text: z.string(),
+	final: z.boolean(),
 });
-export type Caption = z.infer<typeof captionSchema>;
+export type CaptionType = z.infer<typeof captionSchema>;

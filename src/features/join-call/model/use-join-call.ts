@@ -1,29 +1,147 @@
-import type { Room } from "livekit-client";
-import { useCallback, useState } from "react";
-import { fetchLiveKitToken } from "@/entities/call";
-import { env } from "@/shared/config";
+import { type Room, RoomEvent } from "livekit-client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type CallMode,
+	createCall,
+	disconnectCall,
+	joinCall,
+	sendHeartbeat,
+} from "@/entities/call";
 import { connectRoom } from "@/shared/lib";
+import { getOrCreateSessionKey } from "./session-keys";
 
-type JoinCallStatus = "idle" | "connecting" | "connected" | "error";
+type JoinCallStatus = "idle" | "connecting" | "connected" | "reconnecting" | "error";
 
 interface JoinCallState {
 	room: Room | null;
 	status: JoinCallStatus;
+	callId: string | null;
 }
 
-/** Fetches a LiveKit room token and connects — the room is used for presence + the data channel only. */
-export function useJoinCall() {
-	const [state, setState] = useState<JoinCallState>({ room: null, status: "idle" });
+interface JoinParams {
+	roomCode: string;
+	mode: CallMode;
+	isCreator: boolean;
+}
 
-	const join = useCallback(async (roomName: string, identity: string) => {
-		setState({ room: null, status: "connecting" });
+const HEARTBEAT_INTERVAL_MS = 10_000;
+const RETRY_DELAY_MS = 5_000;
+const MAX_RETRIES = 6;
+
+/**
+ * Joins a call room per the backend's contract: create (DEAF only) → join →
+ * connect to LiveKit → heartbeat every 10s (the server's participant lease
+ * expires without it) → on an unexpected disconnect, retry joining for up to
+ * 30s (matching the lease window) before giving up.
+ *
+ * `generationRef` guards every async step (connect/retry/heartbeat/the
+ * Disconnected handler) against acting after a newer `join()` call has
+ * superseded them. Without it, two Rooms connecting with the same identity
+ * (e.g. React StrictMode's double effect invocation in dev) kick each other
+ * off and reconnect forever — each side's stale retry loop fights the other.
+ */
+export function useJoinCall() {
+	const [state, setState] = useState<JoinCallState>({ room: null, status: "idle", callId: null });
+	const stateRef = useRef(state);
+	stateRef.current = state;
+	const paramsRef = useRef<JoinParams | null>(null);
+	const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+	const manualLeaveRef = useRef(false);
+	const generationRef = useRef(0);
+
+	const isCurrent = (generation: number) =>
+		generation === generationRef.current && !manualLeaveRef.current;
+
+	const stopHeartbeat = () => {
+		clearInterval(heartbeatRef.current);
+		heartbeatRef.current = undefined;
+	};
+
+	async function connect(
+		params: JoinParams,
+		isRetry: boolean,
+		generation: number,
+	): Promise<boolean> {
+		if (!isCurrent(generation)) return false;
+		setState((prev) => ({ ...prev, status: isRetry ? "reconnecting" : "connecting" }));
 		try {
-			const token = await fetchLiveKitToken(roomName, identity);
-			const room = await connectRoom(env.VITE_LIVEKIT_URL, token);
-			setState({ room, status: "connected" });
+			const { roomCode, mode, isCreator } = params;
+			const participantKey = getOrCreateSessionKey("participant", roomCode);
+			if (isCreator) {
+				await createCall(roomCode, getOrCreateSessionKey("creator", roomCode));
+			}
+			const result = await joinCall(roomCode, mode, participantKey);
+			const room = await connectRoom(result.livekitUrl, result.token);
+
+			if (!isCurrent(generation)) {
+				room.disconnect();
+				return false;
+			}
+
+			room.once(RoomEvent.Disconnected, () => {
+				if (!isCurrent(generation)) return;
+				stopHeartbeat();
+				void retryLoop(generation);
+			});
+
+			stopHeartbeat();
+			heartbeatRef.current = setInterval(() => {
+				if (isCurrent(generation)) sendHeartbeat(result.callId, participantKey).catch(() => {});
+			}, HEARTBEAT_INTERVAL_MS);
+
+			setState({ room, status: "connected", callId: result.callId });
+			return true;
 		} catch {
-			setState({ room: null, status: "error" });
+			return false;
 		}
+	}
+
+	async function retryLoop(generation: number): Promise<void> {
+		const params = paramsRef.current;
+		if (!isCurrent(generation) || !params) return;
+		setState((prev) => ({ ...prev, room: null, status: "reconnecting" }));
+
+		for (let attempt = 0; attempt < MAX_RETRIES && isCurrent(generation); attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+			if (!isCurrent(generation)) return;
+			if (await connect(params, true, generation)) return;
+		}
+		if (isCurrent(generation)) setState({ room: null, status: "error", callId: null });
+	}
+
+	// connect/retryLoop/stopHeartbeat/isCurrent are refs-and-setState-only closures
+	// declared in this hook's body, not reactive values — stable by construction, so
+	// the empty dep array is intentional.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
+	const join = useCallback(async (roomCode: string, mode: CallMode, isCreator: boolean) => {
+		generationRef.current += 1;
+		const generation = generationRef.current;
+		manualLeaveRef.current = false;
+		stopHeartbeat();
+		stateRef.current.room?.disconnect();
+
+		const params = { roomCode, mode, isCreator };
+		paramsRef.current = params;
+		setState({ room: null, status: "connecting", callId: null });
+		const ok = await connect(params, false, generation);
+		if (!ok) void retryLoop(generation);
+	}, []);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above join
+	useEffect(() => {
+		return () => {
+			generationRef.current += 1;
+			manualLeaveRef.current = true;
+			stopHeartbeat();
+			const params = paramsRef.current;
+			const { room, callId } = stateRef.current;
+			if (params && callId) {
+				disconnectCall(callId, getOrCreateSessionKey("participant", params.roomCode)).catch(
+					() => {},
+				);
+			}
+			room?.disconnect();
+		};
 	}, []);
 
 	return { ...state, join };

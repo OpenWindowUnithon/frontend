@@ -19,7 +19,6 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.10",
-		"@cloudflare/workers-types": "^5.20260823.1",
 		"@feature-sliced/steiger-plugin": "^0.7.0",
 		"@seed-design/vite-plugin": "^2.1.0",
 		"@tanstack/react-query-devtools": "^5.102.1",
@@ -56,7 +55,6 @@
 		"dayjs": "^1.11.23",
 		"es-toolkit": "^1.51.0",
 		"livekit-client": "^2.22.0",
-		"livekit-server-sdk": "^2.18.0",
 		"lucide-react": "^1.33.0",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",

@@ -1,6 +1,16 @@
-import type { Caption as CaptionType } from "../model/types";
+import { cn } from "@/shared/lib";
+import type { CaptionType } from "../model/types";
 
-/** Renders one caption bubble — given a Caption, display it. No fetching, no state. */
+/** Renders one caption bubble — dimmed while interim, solid once the agent marks it final. */
 export function Caption({ caption }: { caption: CaptionType }) {
-	return <p className="rounded-lg bg-muted px-4 py-2 text-lg">{caption.text}</p>;
+	return (
+		<p
+			className={cn(
+				"rounded-lg bg-muted px-4 py-2 text-lg transition-opacity",
+				!caption.final && "opacity-60",
+			)}
+		>
+			{caption.text}
+		</p>
+	);
 }
