@@ -14,6 +14,7 @@ import { Route as CallRouteImport } from './routes/call'
 import { Route as LobbyRouteImport } from './routes/lobby'
 import { Route as MyRouteImport } from './routes/my'
 import { Route as RecentRouteImport } from './routes/recent'
+import { Route as TestCameraRouteImport } from './routes/test-camera'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,6 +41,11 @@ const RecentRoute = RecentRouteImport.update({
   path: '/recent',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TestCameraRoute = TestCameraRouteImport.update({
+  id: '/test-camera',
+  path: '/test-camera',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/lobby': typeof LobbyRoute
   '/my': typeof MyRoute
   '/recent': typeof RecentRoute
+  '/test-camera': typeof TestCameraRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/lobby': typeof LobbyRoute
   '/my': typeof MyRoute
   '/recent': typeof RecentRoute
+  '/test-camera': typeof TestCameraRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +70,14 @@ export interface FileRoutesById {
   '/lobby': typeof LobbyRoute
   '/my': typeof MyRoute
   '/recent': typeof RecentRoute
+  '/test-camera': typeof TestCameraRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/call' | '/lobby' | '/my' | '/recent'
+  fullPaths: '/' | '/call' | '/lobby' | '/my' | '/recent' | '/test-camera'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/call' | '/lobby' | '/my' | '/recent'
-  id: '__root__' | '/' | '/call' | '/lobby' | '/my' | '/recent'
+  to: '/' | '/call' | '/lobby' | '/my' | '/recent' | '/test-camera'
+  id: '__root__' | '/' | '/call' | '/lobby' | '/my' | '/recent' | '/test-camera'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +86,7 @@ export interface RootRouteChildren {
   LobbyRoute: typeof LobbyRoute
   MyRoute: typeof MyRoute
   RecentRoute: typeof RecentRoute
+  TestCameraRoute: typeof TestCameraRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -116,6 +126,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RecentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/test-camera': {
+      id: '/test-camera'
+      path: '/test-camera'
+      fullPath: '/test-camera'
+      preLoaderRoute: typeof TestCameraRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -125,6 +142,7 @@ const rootRouteChildren: RootRouteChildren = {
   LobbyRoute: LobbyRoute,
   MyRoute: MyRoute,
   RecentRoute: RecentRoute,
+  TestCameraRoute: TestCameraRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
