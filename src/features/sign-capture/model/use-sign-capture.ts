@@ -22,7 +22,7 @@ import {
 	RollingWindow,
 	splitHandsByHandedness,
 } from "./landmarks";
-import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
+import { CONFIDENCE_THRESHOLD, isDemoKslWord, KSL_WORD_METADATA, predictSign } from "./sign-model";
 import type { RecognizedSign } from "./types";
 
 export interface UseSignCaptureReturn {
@@ -410,7 +410,10 @@ export function useSignCapture(
 						: 0;
 					const finalConfidence = lstmCandidate ? confidence : dtwConfidence;
 
-					if (finalCandidate) {
+					// Demo scope: only the 7 words in DEMO_KSL_WORDS should ever surface as a
+					// recognized sign, regardless of whether the model or a custom DTW reference
+					// produced the match -- anything else is treated the same as "no sign".
+					if (finalCandidate && isDemoKslWord(finalCandidate)) {
 						handleKslPrediction(finalCandidate, finalConfidence);
 					}
 				})
