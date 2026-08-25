@@ -47,7 +47,7 @@ export interface UseSignCaptureReturn {
 
 const CONSECUTIVE_REQUIRED = 2;
 const NO_SIGN_STREAK_TO_RESET = 5;
-const UTTERANCE_PAUSE_MS = 1400;
+const UTTERANCE_PAUSE_MS = 3000;
 const MOTION_VELOCITY_THRESHOLD = 0.12;
 
 function renderLandmarksToCanvas(
@@ -295,11 +295,15 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		};
 	}, [startCamera, stopCamera]);
 
-	// Debounced LLM translation of word sequence
+	// Debounced LLM translation of word sequence. Fires UTTERANCE_PAUSE_MS after the last
+	// confirmed word; clears the buffer immediately so a word signed while this request is
+	// in flight starts a fresh utterance instead of being resent with the old one.
 	const flushUtterance = useCallback(() => {
 		if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
 		utteranceTimerRef.current = setTimeout(() => {
 			const words = [...wordBufferRef.current];
+			wordBufferRef.current = [];
+			setWordBuffer([]);
 			if (words.length === 0) return;
 
 			setIsComposing(true);
