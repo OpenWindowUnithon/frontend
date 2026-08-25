@@ -4,7 +4,6 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import axios from "axios";
 import { hapticTrigger } from "ios-haptics";
-import { Camera } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
 	createOutgoingCall,
@@ -16,7 +15,7 @@ import {
 	setMyPhone,
 } from "@/entities/call";
 import { setSessionKey } from "@/features/join-call";
-import { isLocalOrPreview, snackbar } from "@/shared/lib";
+import { snackbar } from "@/shared/lib";
 import { ActionButton } from "@/shared/ui";
 import { PhoneNav } from "@/widgets/phone-nav";
 
@@ -201,20 +200,8 @@ export function HomePage() {
 
 	return (
 		<main className="mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden bg-card px-6">
-			<header className="flex min-h-14 shrink-0 items-center justify-between pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
+			<header className="flex min-h-14 shrink-0 items-center pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3">
 				<h1 className="sr-only">전화 키패드</h1>
-				{isLocalOrPreview() ? (
-					<button
-						type="button"
-						onClick={() => navigate({ to: "/test-camera" })}
-						className="flex items-center gap-1.5 rounded-full border border-blue-500/40 bg-blue-500/10 px-3 py-1.5 font-semibold text-blue-400 text-xs transition-all hover:bg-blue-500/20 active:scale-95"
-					>
-						<Camera className="size-3.5" />
-						<span>카메라 테스트</span>
-					</button>
-				) : (
-					<div />
-				)}
 			</header>
 
 			<section className="flex min-h-0 flex-1 flex-col items-center justify-end overflow-y-auto pb-5">

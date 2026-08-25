@@ -1,4 +1,6 @@
 import {
+	IconCameraLine,
+	IconChevronRightLine,
 	IconHandWaveLine,
 	IconSpeakerWave2Line,
 	IconSpeedometerLine,
@@ -6,6 +8,7 @@ import {
 } from "@karrotmarket/react-monochrome-icon";
 import { Icon, Text } from "@seed-design/react";
 import { useMutation } from "@tanstack/react-query";
+import { createLink } from "@tanstack/react-router";
 import axios from "axios";
 import { type ReactNode, useState } from "react";
 import {
@@ -17,13 +20,14 @@ import {
 	setCallPreferences,
 	setMyPhone,
 } from "@/entities/call";
-import { snackbar } from "@/shared/lib";
+import { isLocalOrPreview, snackbar } from "@/shared/lib";
 import {
 	ActionButton,
 	List,
 	ListDivider,
 	ListHeader,
 	ListItem,
+	ListLinkItem,
 	ListSwitchItem,
 	SeedSelectContent,
 	SeedSelectItem,
@@ -35,6 +39,8 @@ import {
 } from "@/shared/ui";
 import { PageTopBar, useCompactTopBar } from "@/widgets/page-top-bar";
 import { PhoneNav } from "@/widgets/phone-nav";
+
+const RouterListLinkItem = createLink(ListLinkItem);
 
 function formatPhone(value: string) {
 	if (value.length <= 3) return value;
@@ -172,6 +178,22 @@ export function ProfilePage() {
 						/>
 					</List>
 				</div>
+				{isLocalOrPreview() && (
+					<div className="mt-10 px-4">
+						<ListHeader as="h2" variant="boldSolid">
+							개발 도구
+						</ListHeader>
+						<List>
+							<RouterListLinkItem
+								to="/test-camera"
+								title="카메라 테스트"
+								detail="수어 인식 카메라를 확인해요."
+								prefix={<Icon svg={<IconCameraLine />} />}
+								suffix={<Icon svg={<IconChevronRightLine />} size="18px" />}
+							/>
+						</List>
+					</div>
+				)}
 			</section>
 			<PhoneNav current="profile" />
 		</main>
