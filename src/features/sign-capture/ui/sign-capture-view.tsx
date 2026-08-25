@@ -19,6 +19,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
+import type { CaptionType } from "@/entities/caption";
 import { Button, Input } from "@/shared/ui";
 import { KSL_WORD_METADATA } from "../model/sign-model";
 import type { RecognizedSign } from "../model/sign-recognizer";
@@ -411,9 +412,11 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 /** Camera preview for the signer — runs Hand & Pose Landmarker locally with velocity gating & hybrid engine. */
 export function SignCaptureView({
 	room = null,
+	captions = [],
 	className = "",
 }: {
 	room?: Room | null;
+	captions?: CaptionType[];
 	className?: string;
 }) {
 	const {
@@ -438,7 +441,7 @@ export function SignCaptureView({
 		clearHistory,
 		recordReference,
 		removeReference,
-	} = useSignCapture(room);
+	} = useSignCapture(room, captions);
 
 	const [showGuide, setShowGuide] = useState(false);
 

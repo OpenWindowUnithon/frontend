@@ -1,15 +1,20 @@
 import type { Room } from "livekit-client";
 import type { CallMode } from "@/entities/call";
 import { AgentAudioPlayer } from "@/features/play-agent-audio";
-import { CaptionList } from "@/features/receive-captions";
+import { CaptionList, useReceiveCaptions } from "@/features/receive-captions";
 import { SignCaptureView } from "@/features/sign-capture";
 import { MicToggleButton } from "@/features/toggle-mic";
 
+// useReceiveCaptions is called once here (LiveKit only allows one handler per text-stream
+// topic) and the result is threaded to both CaptionList (display) and SignCaptureView
+// (conversation context for the LLM compose call) instead of each subscribing itself.
 function DeafRoom({ room }: { room: Room | null }) {
+	const captions = useReceiveCaptions(room);
+
 	return (
 		<div className="flex flex-col items-center gap-6 p-8">
-			<SignCaptureView room={room} />
-			<CaptionList room={room} />
+			<SignCaptureView room={room} captions={captions} />
+			<CaptionList captions={captions} />
 		</div>
 	);
 }
