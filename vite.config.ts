@@ -16,8 +16,23 @@ export default defineConfig({
 			generatedRouteTree: "./src/app/routeTree.gen.ts",
 		}),
 		react(),
-		tailwindcss(),
 		seedDesignPlugin(),
+		// SEED component styles are emitted as route-level CSS chunks. Declare the
+		// cascade order before every stylesheet so those chunks always land in the
+		// intended layer, regardless of navigation/load order.
+		{
+			name: "inject-seed-layer-order",
+			transformIndexHtml() {
+				return [
+					{
+						tag: "style",
+						children: "@layer theme, base, seed-base, components, seed-components, utilities;",
+						injectTo: "head-prepend",
+					},
+				];
+			},
+		},
+		tailwindcss(),
 	],
 	resolve: {
 		alias: {

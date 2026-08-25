@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import { type Room, RoomEvent } from "livekit-client";
+import { ConnectionState, type Room, RoomEvent } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	acceptCall,
@@ -12,6 +12,7 @@ import {
 	getCallStatus,
 	joinCall,
 	rejectCall,
+	type StatusResult,
 	sendHeartbeat,
 } from "@/entities/call";
 import { connectRoom } from "@/shared/lib";
@@ -23,6 +24,7 @@ type JoinCallStatus =
 	| "ringing"
 	| "connected"
 	| "reconnecting"
+	| "ended"
 	| "rejected"
 	| "error";
 
@@ -37,26 +39,21 @@ interface JoinParams {
 	roomCode: string;
 	mode: CallMode;
 	isCreator: boolean;
+	participantKey: string;
 }
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const STATUS_POLL_INTERVAL_MS = 1_500;
 const RETRY_DELAY_MS = 5_000;
 const MAX_RETRIES = 6;
-const RINGING_POLL_MS = 1_500;
 
-/**
- * Joins a call room per the backend's ring-then-accept contract: create (DEAF only) → join
- * (reserves a slot, no LiveKit token yet — reports RINGING plus a CALLER/CALLEE role) →
- * poll `/status` every 1.5s (the CALLEE may instead call `accept()` directly) → once ACTIVE,
- * connect to LiveKit → heartbeat every 10s. On an unexpected disconnect, rejoin and re-enter
- * the ringing/poll cycle — the backend reuses the existing slot and is almost always already
- * ACTIVE by then, so this resolves in one poll — retrying for up to 30s before giving up.
- *
- * `generationRef` guards every async step (poll reaction/connect/retry/heartbeat/the
- * Disconnected handler) against acting after a newer `join()` call has superseded them.
- * Without it, two Rooms connecting with the same identity (e.g. React StrictMode's double
- * effect invocation in dev) kick each other off and reconnect forever.
- */
+function hasLiveKitCredentials(
+	result: StatusResult,
+): result is StatusResult & { livekitUrl: string; token: string } {
+	return result.status === "ACTIVE" && Boolean(result.livekitUrl && result.token);
+}
+
+/** Owns the create → ringing → accept/reject → LiveKit connection state machine. */
 export function useJoinCall() {
 	const [state, setState] = useState<JoinCallState>({
 		room: null,
@@ -65,13 +62,21 @@ export function useJoinCall() {
 		role: null,
 	});
 	const stateRef = useRef(state);
+	const [rejectedBySelf, setRejectedBySelf] = useState(false);
 	stateRef.current = state;
 	const paramsRef = useRef<JoinParams | null>(null);
-	const participantKeyRef = useRef<string | null>(null);
 	const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 	const manualLeaveRef = useRef(false);
 	const connectingRef = useRef(false);
 	const generationRef = useRef(0);
+
+	const updateState = (next: JoinCallState | ((current: JoinCallState) => JoinCallState)) => {
+		setState((current) => {
+			const value = typeof next === "function" ? next(current) : next;
+			stateRef.current = value;
+			return value;
+		});
+	};
 
 	const isCurrent = (generation: number) =>
 		generation === generationRef.current && !manualLeaveRef.current;
@@ -81,203 +86,268 @@ export function useJoinCall() {
 		heartbeatRef.current = undefined;
 	};
 
-	async function connectToLiveKit(
-		livekitUrl: string,
-		token: string,
-		callId: string,
-		role: CallRole,
+	const markRejected = (bySelf = false) => {
+		setRejectedBySelf(bySelf);
+		generationRef.current += 1;
+		manualLeaveRef.current = true;
+		connectingRef.current = false;
+		stopHeartbeat();
+		stateRef.current.room?.disconnect();
+		updateState((current) => ({ ...current, room: null, status: "rejected" }));
+	};
+
+	const statusQuery = useQuery({
+		queryKey: ["call-status", state.callId, paramsRef.current?.participantKey],
+		queryFn: () => {
+			const params = paramsRef.current;
+			if (!state.callId || !params) throw new Error("통화 상태 조회 정보가 없습니다.");
+			return getCallStatus(state.callId, params.participantKey);
+		},
+		enabled: state.status === "ringing" && Boolean(state.callId),
+		refetchInterval: STATUS_POLL_INTERVAL_MS,
+		refetchIntervalInBackground: true,
+		retry: 2,
+	});
+
+	const acceptMutation = useMutation({
+		mutationFn: () => {
+			const params = paramsRef.current;
+			const { callId } = stateRef.current;
+			if (!callId || !params) throw new Error("수락할 통화가 없습니다.");
+			return acceptCall(callId, params.participantKey);
+		},
+	});
+
+	const rejectMutation = useMutation({
+		mutationFn: () => {
+			const params = paramsRef.current;
+			const { callId } = stateRef.current;
+			if (!callId || !params) throw new Error("거절할 통화가 없습니다.");
+			return rejectCall(callId, params.participantKey);
+		},
+	});
+
+	async function connectWithCredentials(
+		result: StatusResult,
 		generation: number,
-	) {
-		if (!isCurrent(generation) || connectingRef.current) return;
+		isRetry: boolean,
+	): Promise<boolean> {
+		if (!isCurrent(generation) || connectingRef.current) return false;
+		if (!hasLiveKitCredentials(result)) throw new Error("ACTIVE 응답에 LiveKit 정보가 없습니다.");
+
 		connectingRef.current = true;
+		updateState((current) => ({
+			...current,
+			status: isRetry ? "reconnecting" : "connecting",
+		}));
 		try {
-			const room = await connectRoom(livekitUrl, token);
+			const room = await connectRoom(result.livekitUrl, result.token);
 			if (!isCurrent(generation)) {
 				room.disconnect();
-				return;
+				return false;
 			}
 
 			room.once(RoomEvent.Disconnected, () => {
 				if (!isCurrent(generation)) return;
 				stopHeartbeat();
+				connectingRef.current = false;
 				void retryLoop(generation);
 			});
 
+			const params = paramsRef.current;
+			const callId = stateRef.current.callId;
+			if (!params || !callId) {
+				room.disconnect();
+				return false;
+			}
+
 			stopHeartbeat();
 			heartbeatRef.current = setInterval(() => {
-				const participantKey = participantKeyRef.current;
-				if (isCurrent(generation) && participantKey) {
-					sendHeartbeat(callId, participantKey).catch(() => {});
-				}
+				if (isCurrent(generation)) sendHeartbeat(callId, params.participantKey).catch(() => {});
 			}, HEARTBEAT_INTERVAL_MS);
-
-			setState({ room, status: "connected", callId, role });
+			updateState((current) => ({ ...current, room, status: "connected" }));
+			return true;
 		} finally {
 			connectingRef.current = false;
 		}
 	}
 
-	// Reserves the participant slot and moves to "ringing" (or straight to "rejected" if this
-	// room code's call was already declined/ended). Split out of doJoin purely to keep that
-	// function's cognitive complexity in check.
-	async function performJoin(params: JoinParams, generation: number): Promise<void> {
-		const { roomCode, mode, isCreator } = params;
-		const participantKey = getOrCreateSessionKey("participant", roomCode);
-		participantKeyRef.current = participantKey;
-		if (isCreator) {
-			await createCall(roomCode, getOrCreateSessionKey("creator", roomCode));
-		}
-		const result = await joinCall(roomCode, mode, participantKey);
-		if (!isCurrent(generation)) {
-			const current = paramsRef.current;
-			const replacedBySameJoin =
-				!manualLeaveRef.current && current?.roomCode === roomCode && current.mode === mode;
-			if (!replacedBySameJoin) await rejectCall(result.callId, participantKey).catch(() => {});
-			return;
-		}
-
-		const status =
-			result.status === "REJECTED" || result.status === "ENDED" ? "rejected" : "ringing";
-		setState({ room: null, status, callId: result.callId, role: result.role });
-	}
-
-	// "joined" on success (now ringing, not yet connected to LiveKit); "retry" for anything
-	// that might resolve itself (network blip, transient 5xx); "fatal" for errors retrying
-	// can't fix (4xx — bad room code, rejected mode, etc.) so we can fail fast instead of
-	// burning the full retry window on something that will never succeed.
-	async function doJoin(
-		params: JoinParams,
-		isRetry: boolean,
-		generation: number,
-	): Promise<"joined" | "retry" | "fatal"> {
-		if (!isCurrent(generation)) return "retry";
-		setState((prev) => ({ ...prev, status: isRetry ? "reconnecting" : "connecting" }));
-		try {
-			await performJoin(params, generation);
-			return "joined";
-		} catch (error) {
-			console.error("[join-call] join failed", error);
-			const httpStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
-			return httpStatus !== undefined && httpStatus < 500 ? "fatal" : "retry";
-		}
-	}
-
-	// Waits out one retry delay, then attempts a join — pulled out of retryLoop purely to
-	// keep that function's cognitive complexity in check.
-	async function retryOnce(
-		params: JoinParams,
-		generation: number,
-	): Promise<"joined" | "retry" | "fatal" | "stale"> {
-		await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-		if (!isCurrent(generation)) return "stale";
-		return doJoin(params, true, generation);
-	}
-
 	async function retryLoop(generation: number): Promise<void> {
 		const params = paramsRef.current;
-		if (!isCurrent(generation) || !params) return;
-		setState((prev) => ({ ...prev, room: null, status: "reconnecting" }));
+		const callId = stateRef.current.callId;
+		if (!isCurrent(generation) || !params || !callId) return;
+		updateState((current) => ({ ...current, room: null, status: "reconnecting" }));
 
 		for (let attempt = 0; attempt < MAX_RETRIES && isCurrent(generation); attempt += 1) {
-			const result = await retryOnce(params, generation);
-			if (result === "joined" || result === "stale") return;
+			const result = await retryOnce(params, callId, generation);
+			if (result === "connected" || result === "terminal" || result === "stale") return;
 			if (result === "fatal") break;
 		}
-		if (isCurrent(generation)) setState({ room: null, status: "error", callId: null, role: null });
+		if (isCurrent(generation)) {
+			updateState((current) => ({ ...current, room: null, status: "error" }));
+		}
 	}
 
-	// doJoin/retryLoop/connectToLiveKit/isCurrent are refs-and-setState-only closures
-	// declared in this hook's body, not reactive values — stable by construction, so the
-	// empty dep array is intentional.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
+	// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: bounded retry result classifier
+	async function retryOnce(
+		params: JoinParams,
+		callId: string,
+		generation: number,
+	): Promise<"connected" | "terminal" | "retry" | "stale" | "fatal"> {
+		await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+		if (!isCurrent(generation)) return "stale";
+		try {
+			const result = await getCallStatus(callId, params.participantKey);
+			if (result.status === "REJECTED" || result.status === "ENDED") {
+				markRejected();
+				return "terminal";
+			}
+			if (!hasLiveKitCredentials(result)) return "retry";
+			return (await connectWithCredentials(result, generation, true)) ? "connected" : "retry";
+		} catch (error) {
+			const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+			return status !== undefined && status < 500 ? "fatal" : "retry";
+		}
+	}
+
+	// This callback only reads refs and stable React setters. Keeping it stable prevents
+	// CallPage's join effect from restarting the server session on every render.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: refs-only state machine entrypoint
 	const join = useCallback(async (roomCode: string, mode: CallMode, isCreator: boolean) => {
 		generationRef.current += 1;
 		const generation = generationRef.current;
 		manualLeaveRef.current = false;
+		setRejectedBySelf(false);
 		connectingRef.current = false;
 		stopHeartbeat();
 		stateRef.current.room?.disconnect();
 
-		const params = { roomCode, mode, isCreator };
+		const participantKey = getOrCreateSessionKey("participant", roomCode);
+		const params = { roomCode, mode, isCreator, participantKey };
 		paramsRef.current = params;
-		setState({ room: null, status: "connecting", callId: null, role: null });
-		const result = await doJoin(params, false, generation);
-		if (result === "retry") void retryLoop(generation);
-		else if (result === "fatal" && isCurrent(generation)) {
-			setState({ room: null, status: "error", callId: null, role: null });
+		updateState({ room: null, status: "connecting", callId: null, role: null });
+
+		try {
+			if (isCreator) {
+				await createCall(roomCode, getOrCreateSessionKey("creator", roomCode));
+			}
+			const result = await joinCall(roomCode, mode, participantKey);
+			if (!isCurrent(generation)) {
+				const currentParams = paramsRef.current;
+				const supersededBySameJoin =
+					!manualLeaveRef.current &&
+					currentParams?.roomCode === roomCode &&
+					currentParams.mode === mode;
+				if (!supersededBySameJoin) {
+					await rejectCall(result.callId, participantKey).catch(() => {});
+				}
+				return;
+			}
+			updateState({ room: null, status: "ringing", callId: result.callId, role: result.role });
+		} catch (error) {
+			console.error("[join-call] join failed", error);
+			if (isCurrent(generation)) {
+				updateState({ room: null, status: "error", callId: null, role: null });
+			}
 		}
 	}, []);
 
-	const { callId, status, role } = state;
-	const generation = generationRef.current;
-	const pollingEnabled = status === "ringing" && callId !== null;
-
-	const statusQuery = useQuery({
-		queryKey: ["call-status", callId, participantKeyRef.current],
-		queryFn: () => getCallStatus(callId as string, participantKeyRef.current as string),
-		enabled: pollingEnabled,
-		refetchInterval: RINGING_POLL_MS,
-		refetchIntervalInBackground: true,
-		staleTime: 0,
-	});
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: connectToLiveKit is a stable ref-only closure
-	useEffect(() => {
-		const result = statusQuery.data;
-		if (!result || !pollingEnabled || !callId || !role) return;
-		if (result.status === "ACTIVE" && result.token) {
-			void connectToLiveKit(result.livekitUrl, result.token, callId, role, generation);
-		} else if (result.status === "REJECTED" || result.status === "ENDED") {
-			setState((prev) => ({ ...prev, room: null, status: "rejected" }));
+	const accept = async () => {
+		if (stateRef.current.role !== "CALLEE") return;
+		const generation = generationRef.current;
+		let result: StatusResult;
+		try {
+			result = await acceptMutation.mutateAsync();
+		} catch {
+			return;
 		}
-	}, [statusQuery.data, pollingEnabled, callId, role, generation]);
+		try {
+			await connectWithCredentials(result, generation, false);
+		} catch (error) {
+			console.error("[join-call] accepted call connection failed", error);
+			void retryLoop(generation);
+		}
+	};
 
-	const acceptMutation = useMutation({
-		mutationFn: () => acceptCall(callId as string, participantKeyRef.current as string),
-		onSuccess: (result) => {
-			if (!isCurrent(generation) || !callId || !role || !result.token) return;
-			void connectToLiveKit(result.livekitUrl, result.token, callId, role, generation);
-		},
-	});
+	const reject = async () => {
+		try {
+			await rejectMutation.mutateAsync();
+			markRejected(true);
+		} catch {
+			return;
+		}
+	};
 
-	const rejectMutation = useMutation({
-		mutationFn: () => rejectCall(callId as string, participantKeyRef.current as string),
-		onSuccess: () => {
-			if (!isCurrent(generation)) return;
-			setState((prev) => ({ ...prev, room: null, status: "rejected" }));
-		},
-	});
+	const leave = async () => {
+		manualLeaveRef.current = true;
+		stopHeartbeat();
+		const generation = generationRef.current;
+		const params = paramsRef.current;
+		const { room, callId, status } = stateRef.current;
 
-	// Only the creator (DEAF, per `isCreator` in `join`) can end the call for both sides.
-	// Leaving without ending it is just navigating away -- the unmount cleanup below
-	// already disconnects this participant's own slot.
-	const endMutation = useMutation({
-		mutationFn: () => {
-			const params = paramsRef.current;
-			if (!callId || !params?.isCreator) return Promise.resolve();
-			return endCall(callId, getOrCreateSessionKey("creator", params.roomCode));
-		},
-	});
+		try {
+			if (params && callId) {
+				if (status === "ringing" || status === "connecting") {
+					await rejectCall(callId, params.participantKey);
+				} else if (params.isCreator) {
+					await endCall(callId, getOrCreateSessionKey("creator", params.roomCode));
+				} else {
+					await disconnectCall(callId, params.participantKey);
+				}
+			}
+			generationRef.current += 1;
+			const endedState: JoinCallState = { room, status: "ended", callId: null, role: null };
+			stateRef.current = endedState;
+			setState(endedState);
+			room?.disconnect();
+		} catch (error) {
+			manualLeaveRef.current = false;
+			if (room?.state === ConnectionState.Disconnected) void retryLoop(generation);
+			throw error;
+		}
+	};
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above join
+	// The state-machine helpers intentionally read current refs; the query result is
+	// the only reactive trigger for this transition.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: refs-only transition helpers
+	useEffect(() => {
+		if (statusQuery.isError && stateRef.current.status === "ringing") {
+			updateState((current) => ({ ...current, status: "error" }));
+			return;
+		}
+		const result = statusQuery.data;
+		if (!result || stateRef.current.status !== "ringing") return;
+		if (result.status === "REJECTED" || result.status === "ENDED") {
+			markRejected();
+			return;
+		}
+		if (result.status === "ACTIVE" && !hasLiveKitCredentials(result)) {
+			updateState((current) => ({ ...current, status: "error" }));
+			return;
+		}
+		if (hasLiveKitCredentials(result)) {
+			void connectWithCredentials(result, generationRef.current, false).catch((error) => {
+				console.error("[join-call] LiveKit connect failed", error);
+				void retryLoop(generationRef.current);
+			});
+		}
+	}, [statusQuery.data, statusQuery.isError]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: unmount-only refs cleanup
 	useEffect(() => {
 		return () => {
 			generationRef.current += 1;
 			manualLeaveRef.current = true;
 			stopHeartbeat();
 			const params = paramsRef.current;
-			const { room, callId: activeCallId } = stateRef.current;
-			const participantKey = participantKeyRef.current;
-			const currentStatus = stateRef.current.status;
-			if (params && activeCallId && participantKey && currentStatus === "ringing") {
-				rejectCall(activeCallId, participantKey).catch(() => {});
-			} else if (
-				params &&
-				activeCallId &&
-				participantKey &&
-				(currentStatus === "connected" || currentStatus === "reconnecting")
-			) {
-				disconnectCall(activeCallId, participantKey).catch(() => {});
+			const { room, callId, status } = stateRef.current;
+			if (params && callId && (status === "ringing" || status === "connecting")) {
+				rejectCall(callId, params.participantKey).catch(() => {});
+			} else if (params && callId && (status === "connected" || status === "reconnecting")) {
+				const notifyServer = params.isCreator
+					? endCall(callId, getOrCreateSessionKey("creator", params.roomCode))
+					: disconnectCall(callId, params.participantKey);
+				notifyServer.catch(() => {});
 			}
 			room?.disconnect();
 		};
@@ -285,10 +355,13 @@ export function useJoinCall() {
 
 	return {
 		...state,
-		isCreator: paramsRef.current?.isCreator ?? false,
 		join,
-		accept: acceptMutation.mutate,
-		reject: rejectMutation.mutate,
-		end: endMutation.mutateAsync,
+		accept,
+		reject,
+		leave,
+		accepting: acceptMutation.isPending,
+		rejecting: rejectMutation.isPending,
+		actionError: acceptMutation.isError || rejectMutation.isError,
+		rejectedBySelf,
 	};
 }

@@ -1,79 +1,163 @@
-import { Link } from "@tanstack/react-router";
-import { Camera, Sparkles, Video } from "lucide-react";
-import { useState } from "react";
-import { SignCaptureView } from "@/features/sign-capture";
 import {
-	Button,
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogHeader,
-	DialogTitle,
-	DialogTrigger,
-} from "@/shared/ui";
+	IconBackspacekeyFill,
+	IconClockFill,
+	IconPersonFill,
+	IconPhoneFill,
+} from "@karrotmarket/react-monochrome-icon";
+import { Icon } from "@seed-design/react";
+import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+import type { CommunicationMode } from "@/entities/call";
+import { ActionButton, SegmentedControl, SegmentedControlItem } from "@/shared/ui";
+
+const KEYS = [
+	["1", ""],
+	["2", "ABC"],
+	["3", "DEF"],
+	["4", "GHI"],
+	["5", "JKL"],
+	["6", "MNO"],
+	["7", "PQRS"],
+	["8", "TUV"],
+	["9", "WXYZ"],
+	["*", ""],
+	["0", "+"],
+	["#", ""],
+] as const;
+
+function formatPhoneNumber(value: string) {
+	if (value.length <= 3) return value;
+	if (value.length <= 7) return `${value.slice(0, 3)} ${value.slice(3)}`;
+	return `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7, 11)}`;
+}
+
+function createRoomCode() {
+	return `call-${crypto.randomUUID().replaceAll("-", "")}`;
+}
 
 export function HomePage() {
-	const [showTestView, setShowTestView] = useState(false);
+	const navigate = useNavigate();
+	const [digits, setDigits] = useState("");
+	const [communication, setCommunication] = useState<CommunicationMode>("TEXT");
+	const canCall = digits.length >= 8;
+	const phone = formatPhoneNumber(digits);
+
+	const startCall = () => {
+		if (!canCall) return;
+		navigate({
+			to: "/call",
+			search: {
+				room: createRoomCode(),
+				mode: "DEAF",
+				communication,
+				contactName: phone,
+				phone,
+			},
+		});
+	};
 
 	return (
-		<main className="flex min-h-screen flex-col items-center justify-center gap-6 p-6">
-			{/* Title & Info */}
-			<div className="flex flex-col items-center gap-2 text-center">
-				<div className="flex items-center gap-2">
-					<h1 className="font-bold text-3xl text-white">수화 인식 영상 통화</h1>
-					<Dialog>
-						<DialogTrigger render={<Button variant="ghost" size="sm" />}>정보</DialogTrigger>
-						<DialogContent>
-							<DialogHeader>
-								<DialogTitle>수화 인식 영상 통화 솔루션</DialogTitle>
-								<DialogDescription>
-									MediaPipe Vision AI를 활용하여 웹캠으로 손 제스처 및 수어를 실시간 인식하고
-									자막으로 변환합니다.
-								</DialogDescription>
-							</DialogHeader>
-						</DialogContent>
-					</Dialog>
-				</div>
-				<p className="max-w-md text-neutral-400 text-sm">
-					웹캠을 통해 실시간으로 수어를 인식하고, 음성 및 자막으로 실시간 소통할 수 있습니다.
-				</p>
-			</div>
+		<main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-card px-6 pt-[env(safe-area-inset-top)] pb-[max(1rem,env(safe-area-inset-bottom))]">
+			<header className="flex h-11 items-center justify-center">
+				<h1 className="sr-only">전화 키패드</h1>
+			</header>
 
-			{/* Action Buttons */}
-			<div className="flex flex-wrap items-center justify-center gap-3">
-				<Button
-					onClick={() => setShowTestView((prev) => !prev)}
-					size="md"
-					variant={showTestView ? "ghost" : "outline"}
-					className="flex items-center gap-2"
+			<section className="flex flex-1 flex-col items-center justify-end pb-5">
+				<SegmentedControl
+					style={{ width: 224 }}
+					aria-label="통화 방식"
+					value={communication}
+					onValueChange={(value) => setCommunication(value as CommunicationMode)}
 				>
-					<Camera className="h-4 w-4" />
-					{showTestView ? "테스트 화면 닫기" : "웹캠 수화 인식 즉시 테스트"}
-				</Button>
+					<SegmentedControlItem value="TEXT">
+						<span className="whitespace-nowrap">텍스트</span>
+					</SegmentedControlItem>
+					<SegmentedControlItem value="SIGN">
+						<span className="whitespace-nowrap">수어</span>
+					</SegmentedControlItem>
+				</SegmentedControl>
 
-				<Link to="/lobby">
-					<Button size="md" className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500">
-						<Video className="h-4 w-4" />
-						통화 방 입장하기
-					</Button>
-				</Link>
-			</div>
-
-			{/* Standalone Sign Capture Test Container */}
-			{showTestView && (
-				<div className="mt-2 flex w-full max-w-2xl flex-col items-center gap-3 rounded-3xl border border-neutral-800 bg-neutral-900/50 p-5 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95">
-					<div className="flex w-full items-center justify-between px-1">
-						<h3 className="flex items-center gap-2 font-semibold text-neutral-200 text-sm">
-							<Sparkles className="h-4 w-4 text-blue-400" />
-							로컬 웹캠 수화 인식 테스트
-						</h3>
-						<span className="rounded-full bg-blue-500/10 px-2.5 py-0.5 font-medium text-blue-400 text-xs border border-blue-500/20">
-							독립 실행 모드
-						</span>
-					</div>
-					<SignCaptureView />
+				<div
+					className="mt-4 flex min-h-24 w-full flex-col items-center justify-center"
+					aria-live="polite"
+				>
+					<p className="min-h-11 text-center text-4xl leading-11 font-light tracking-tight tabular-nums">
+						{phone || "전화번호 입력"}
+					</p>
 				</div>
-			)}
+
+				<div className="mt-1 grid w-full max-w-[296px] grid-cols-3 gap-x-7 gap-y-3">
+					{KEYS.map(([number, letters]) => (
+						<button
+							key={number}
+							type="button"
+							className="mx-auto grid size-[68px] touch-manipulation appearance-none grid-rows-[38px_12px] content-center place-items-center rounded-full border-0 bg-secondary p-0 text-foreground shadow-none transition select-none active:scale-95 active:bg-bg-neutral-weak-pressed"
+							onClick={() => setDigits((current) => `${current}${number}`.slice(0, 11))}
+							aria-label={number}
+						>
+							<span
+								className={`flex h-[38px] items-center justify-center text-[1.9rem] leading-none font-normal tabular-nums ${number === "*" ? "translate-y-1" : ""}`}
+							>
+								{number}
+							</span>
+							<span className="h-3 whitespace-nowrap text-[0.58rem] leading-3 font-semibold tracking-[0.14em]">
+								{letters}
+							</span>
+						</button>
+					))}
+				</div>
+
+				<div className="mt-5 grid w-full max-w-[310px] grid-cols-3 items-center">
+					<div />
+					<ActionButton
+						layout="iconOnly"
+						size="large"
+						className="mx-auto size-16 rounded-full bg-bg-positive-solid text-primary-foreground hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed"
+						disabled={!canCall}
+						onClick={startCall}
+						aria-label="전화 걸기"
+					>
+						<Icon svg={<IconPhoneFill />} />
+					</ActionButton>
+					{digits ? (
+						<ActionButton
+							layout="iconOnly"
+							variant="ghost"
+							size="large"
+							className="mx-auto"
+							onClick={() => setDigits((current) => current.slice(0, -1))}
+							aria-label="마지막 숫자 지우기"
+						>
+							<Icon svg={<IconBackspacekeyFill />} />
+						</ActionButton>
+					) : (
+						<div />
+					)}
+				</div>
+			</section>
+
+			<nav className="grid grid-cols-3 border-t pt-2" aria-label="전화 메뉴">
+				<button
+					type="button"
+					className="flex flex-col items-center gap-1 py-2 text-muted-foreground"
+				>
+					<IconClockFill className="size-6" aria-hidden />
+					<span className="text-xs">최근 통화</span>
+				</button>
+				<button
+					type="button"
+					className="flex flex-col items-center gap-1 py-2 text-muted-foreground"
+				>
+					<IconPersonFill className="size-6" aria-hidden />
+					<span className="text-xs">연락처</span>
+				</button>
+				<button type="button" className="flex flex-col items-center gap-1 py-2 text-fg-informative">
+					<span className="grid size-6 grid-cols-3 place-items-center text-[0.6rem] font-bold">
+						•••
+					</span>
+					<span className="text-xs font-medium">키패드</span>
+				</button>
+			</nav>
 		</main>
 	);
 }
