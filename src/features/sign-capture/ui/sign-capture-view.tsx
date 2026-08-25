@@ -16,7 +16,7 @@ import {
 	Trash2,
 	User,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CaptionType } from "@/entities/caption";
 import { Button, Input } from "@/shared/ui";
 import { KSL_WORD_METADATA } from "../model/sign-model";
@@ -248,6 +248,21 @@ function RecentSignsHistory({
 	);
 }
 
+// One "동작 저장" click captures whatever's currently in the 30-frame rolling window (~1s of
+// motion at the webcam's ~30fps), so a burst rep needs enough lead time for the signer to get
+// into position and perform the full gesture before that window is sampled, plus a short gap
+// so consecutive reps don't share frames. 10 reps is also DTW's MAX_SAMPLES_PER_WORD cap, so a
+// full burst maximizes the reference set for that word in one go.
+const BURST_SAMPLE_COUNT = 10;
+const BURST_PREP_MS = 2000;
+const BURST_GAP_MS = 700;
+const BURST_RETRY_MS = 400;
+const BURST_MAX_ATTEMPTS = 5;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function CustomWordRecorder({
 	references,
 	onRecord,
@@ -259,6 +274,15 @@ function CustomWordRecorder({
 }) {
 	const [newWord, setNewWord] = useState("");
 	const [recordHint, setRecordHint] = useState<string | null>(null);
+	const [burstProgress, setBurstProgress] = useState<number | null>(null);
+	const cancelRef = useRef(false);
+
+	useEffect(
+		() => () => {
+			cancelRef.current = true;
+		},
+		[],
+	);
 
 	const handleRecord = () => {
 		const word = newWord.trim();
@@ -272,6 +296,39 @@ function CustomWordRecorder({
 		}
 	};
 
+	const handleBurstRecord = async () => {
+		const word = newWord.trim();
+		if (!word) return;
+		cancelRef.current = false;
+		setRecordHint(null);
+		setBurstProgress(0);
+
+		for (let sample = 0; sample < BURST_SAMPLE_COUNT; sample += 1) {
+			let captured = false;
+			for (let attempt = 0; attempt < BURST_MAX_ATTEMPTS && !captured; attempt += 1) {
+				await sleep(attempt === 0 ? BURST_PREP_MS : BURST_RETRY_MS);
+				if (cancelRef.current) return;
+				captured = onRecord(word);
+			}
+			if (!captured) {
+				setBurstProgress(null);
+				setRecordHint(
+					"카메라에 동작이 잘 잡히지 않아 녹화를 중단했습니다. 손과 팔이 잘 보이는지 확인한 뒤 다시 시도해주세요.",
+				);
+				return;
+			}
+			setBurstProgress(sample + 1);
+			await sleep(BURST_GAP_MS);
+			if (cancelRef.current) return;
+		}
+
+		setBurstProgress(null);
+		setRecordHint(`'${word}' 동작 샘플 ${BURST_SAMPLE_COUNT}개를 저장했습니다.`);
+		setNewWord("");
+	};
+
+	const isBursting = burstProgress !== null;
+
 	return (
 		<details className="w-full rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 text-neutral-200 text-sm backdrop-blur-sm">
 			<summary className="flex cursor-pointer items-center justify-between font-medium text-neutral-300 text-xs hover:text-white">
@@ -281,18 +338,20 @@ function CustomWordRecorder({
 			<div className="flex flex-col gap-2.5 pt-3">
 				<p className="text-neutral-400 text-xs leading-relaxed">
 					기본 모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 표현한 뒤 "이 동작 저장"을
-					누르면, 브라우저가 기억하여 다음부터 인식합니다.
+					누르면, 브라우저가 기억하여 다음부터 인식합니다. "10회 자동 녹화"를 누르면 2초 간격으로
+					동작을 반복하는 동안 자동으로 10개 샘플(최대 저장 개수)을 모아줍니다.
 				</p>
 				<div className="flex gap-2">
 					<Input
 						placeholder="단어 이름 (예: 병원)"
 						value={newWord}
 						onChange={(e) => setNewWord(e.target.value)}
+						disabled={isBursting}
 						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
 					/>
 					<Button
 						size="sm"
-						disabled={!newWord.trim()}
+						disabled={!newWord.trim() || isBursting}
 						onClick={handleRecord}
 						className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
 					>
@@ -300,6 +359,41 @@ function CustomWordRecorder({
 						동작 저장
 					</Button>
 				</div>
+				<Button
+					size="sm"
+					disabled={!newWord.trim() || isBursting}
+					onClick={() => void handleBurstRecord()}
+					className="gap-1 bg-emerald-600 hover:bg-emerald-500"
+				>
+					<Sparkles className="h-3.5 w-3.5" />
+					10회 자동 녹화
+				</Button>
+				{isBursting && (
+					<div className="flex flex-col gap-1.5">
+						<div className="flex items-center justify-between text-neutral-300 text-xs">
+							<span>
+								동작을 반복해주세요... {burstProgress}/{BURST_SAMPLE_COUNT}
+							</span>
+							<button
+								type="button"
+								onClick={() => {
+									cancelRef.current = true;
+									setBurstProgress(null);
+									setRecordHint("자동 녹화를 중단했습니다.");
+								}}
+								className="text-red-400 hover:text-red-300"
+							>
+								중단
+							</button>
+						</div>
+						<div className="h-2 w-full overflow-hidden rounded-full bg-neutral-800">
+							<div
+								className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+								style={{ width: `${((burstProgress ?? 0) / BURST_SAMPLE_COUNT) * 100}%` }}
+							/>
+						</div>
+					</div>
+				)}
 				{recordHint && <p className="font-medium text-amber-300 text-xs">{recordHint}</p>}
 				{Object.keys(references).length > 0 && (
 					<ul className="mt-1 flex flex-col gap-1 border-neutral-800 border-t pt-2">
