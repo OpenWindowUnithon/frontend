@@ -7,7 +7,9 @@ import type { Room } from "livekit-client";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { sendChatText } from "@/entities/call";
 import { drawFullBodySkeleton, useHandLandmarker, usePoseLandmarker } from "@/shared/lib";
+import { composeSignSentence } from "../api/sign-api";
 import { recognizeArmPoseSign } from "./arm-pose-recognizer";
+import { clearReference, listReferences, matchReference, saveReference } from "./dtw";
 import {
 	extractFeatures,
 	latestPoseLandmarks,
@@ -31,13 +33,18 @@ export interface UseSignCaptureReturn {
 	lastConfirmedSign: RecognizedSign | null;
 	recentSigns: RecognizedSign[];
 	recognizedText: string | null;
+	composedSentence: string | null;
+	references: Record<string, number>;
 	toggleCamera: () => void;
 	toggleSkeleton: () => void;
 	clearHistory: () => void;
+	recordReference: (word: string) => boolean;
+	removeReference: (word: string) => void;
 }
 
 const CONSECUTIVE_REQUIRED = 3;
 const NO_SIGN_STREAK_TO_RESET = 5;
+const UTTERANCE_PAUSE_MS = 1500;
 
 function renderLandmarksToCanvas(
 	canvas: HTMLCanvasElement | null,
@@ -101,8 +108,8 @@ function updateCandidateStreak(
 
 /**
  * Captures local webcam stream, runs MediaPipe Hand & Pose landmarker,
- * processes full-arm and hand gesture recognition, renders full body skeletons,
- * and publishes recognized text to the LiveKit room.
+ * processes full-arm and hand gesture recognition, compiles recognized words
+ * into natural sentences via LLM, and publishes them to the LiveKit room.
  */
 export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -128,6 +135,10 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	});
 	const predictingRef = useRef(false);
 
+	// Word buffer & Utterance state for LLM translation
+	const wordBufferRef = useRef<string[]>([]);
+	const utteranceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 	const [isCameraActive, setIsCameraActive] = useState(true);
 	const [cameraError, setCameraError] = useState(false);
 	const [showSkeleton, setShowSkeleton] = useState(true);
@@ -137,6 +148,8 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 	const [lastConfirmedSign, setLastConfirmedSign] = useState<RecognizedSign | null>(null);
 	const [recentSigns, setRecentSigns] = useState<RecognizedSign[]>([]);
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
+	const [composedSentence, setComposedSentence] = useState<string | null>(null);
+	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
 
 	// Start webcam stream
 	const startCamera = useCallback(async () => {
@@ -200,6 +213,9 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 
 	const clearHistory = useCallback(() => {
 		setRecentSigns([]);
+		wordBufferRef.current = [];
+		setRecognizedText(null);
+		setComposedSentence(null);
 	}, []);
 
 	// Initialize webcam on mount
@@ -207,19 +223,47 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		startCamera();
 		return () => {
 			stopCamera();
+			if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
 		};
 	}, [startCamera, stopCamera]);
+
+	const flushUtterance = useCallback(() => {
+		if (utteranceTimerRef.current) clearTimeout(utteranceTimerRef.current);
+		utteranceTimerRef.current = setTimeout(() => {
+			const words = [...wordBufferRef.current];
+			wordBufferRef.current = [];
+			if (words.length === 0) return;
+
+			composeSignSentence(words)
+				.then((sentence) => {
+					setComposedSentence(sentence);
+					if (room) {
+						sendChatText(room, sentence);
+					}
+				})
+				.catch(() => {
+					const fallback = words.join(" ");
+					setComposedSentence(fallback);
+					if (room) {
+						sendChatText(room, fallback);
+					}
+				});
+		}, UTTERANCE_PAUSE_MS);
+	}, [room]);
 
 	const commitConfirmedSign = useCallback(
 		(sign: RecognizedSign) => {
 			setLastConfirmedSign(sign);
-			setRecognizedText(sign.label);
 			setRecentSigns((prev) => [sign, ...prev.slice(0, 9)]);
-			if (room) {
-				sendChatText(room, sign.label);
-			}
+
+			// Append word to sentence buffer
+			wordBufferRef.current = [...wordBufferRef.current, sign.label];
+			setRecognizedText(wordBufferRef.current.join(" "));
+
+			// Trigger debounced sentence composition
+			flushUtterance();
 		},
-		[room],
+		[flushUtterance],
 	);
 
 	// Pose Landmarker hook for arm tracking
@@ -238,7 +282,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 						: {
 								id: `ksl_${candidate}`,
 								label: candidate,
-								description: `KSL 수어 인식: ${candidate}`,
+								description: `KSL 수어: ${candidate}`,
 								icon: "🤟",
 								confidence,
 								category: "action",
@@ -303,7 +347,7 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 				commitConfirmedSign(gestureConfirmed);
 			}
 
-			// 3. KSL LSTM Sequence Recognition (Legatalee neural model)
+			// 3. KSL LSTM Sequence Recognition (Legatalee neural model) & DTW Custom Matching
 			const { leftHandLandmarks, rightHandLandmarks } = splitHandsByHandedness(handResult);
 			windowRef.current.push(
 				extractFeatures({ poseLandmarks, leftHandLandmarks, rightHandLandmarks }),
@@ -315,8 +359,12 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 			predictingRef.current = true;
 			predictSign(frames)
 				.then(({ label, confidence }) => {
-					const predCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
-					handleKslPrediction(predCandidate, confidence);
+					const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+					const dtwMatch = matchReference(frames);
+					const finalCandidate = lstmCandidate ?? dtwMatch?.word ?? null;
+					const finalConfidence = lstmCandidate ? confidence : dtwMatch ? 0.9 : 0;
+
+					handleKslPrediction(finalCandidate, finalConfidence);
 				})
 				.catch((err) => {
 					console.error("Sign prediction error:", err);
@@ -334,6 +382,19 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		handleLandmarkerResult,
 	);
 
+	const recordReference = useCallback((word: string): boolean => {
+		const frames = windowRef.current.toArray();
+		if (!frames || !word.trim()) return false;
+		saveReference(word.trim(), frames);
+		setReferences(listReferences());
+		return true;
+	}, []);
+
+	const removeReference = useCallback((word: string) => {
+		clearReference(word);
+		setReferences(listReferences());
+	}, []);
+
 	return {
 		videoRef,
 		canvasRef,
@@ -348,8 +409,12 @@ export function useSignCapture(room: Room | null = null): UseSignCaptureReturn {
 		lastConfirmedSign,
 		recentSigns,
 		recognizedText,
+		composedSentence,
+		references,
 		toggleCamera,
 		toggleSkeleton,
 		clearHistory,
+		recordReference,
+		removeReference,
 	};
 }

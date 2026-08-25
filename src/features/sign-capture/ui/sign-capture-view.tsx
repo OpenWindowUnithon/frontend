@@ -4,15 +4,19 @@ import {
 	Camera,
 	CameraOff,
 	CheckCircle2,
+	ChevronDown,
 	Eye,
 	EyeOff,
 	Hand,
 	HelpCircle,
 	History,
+	Plus,
 	Sparkles,
+	Trash2,
 	User,
 } from "lucide-react";
 import { useState } from "react";
+import { Button, Input } from "@/shared/ui";
 import type { RecognizedSign } from "../model/sign-recognizer";
 import { useSignCapture } from "../model/use-sign-capture";
 
@@ -92,9 +96,11 @@ function CameraStatusBar({
 function ActiveSignOverlay({
 	activeSign,
 	recognizedText,
+	composedSentence,
 }: {
 	activeSign: RecognizedSign | null;
 	recognizedText: string | null;
+	composedSentence: string | null;
 }) {
 	if (activeSign) {
 		return (
@@ -120,13 +126,21 @@ function ActiveSignOverlay({
 	}
 
 	return (
-		<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
-			<Sparkles className="h-3.5 w-3.5 text-blue-400" />
-			<span>
-				{recognizedText
-					? `인식된 수어: "${recognizedText}"`
-					: "팔과 손을 움직여 '안녕하세요', '감사합니다' 등 수어를 표현해보세요"}
-			</span>
+		<div className="flex max-w-full flex-col items-center gap-1">
+			{composedSentence && (
+				<div className="flex items-center gap-2 rounded-full border border-emerald-500/40 bg-black/80 px-4 py-1 text-emerald-300 text-xs shadow-lg backdrop-blur-md animate-in fade-in">
+					<Sparkles className="h-3.5 w-3.5" />
+					<span className="font-medium">번역: "{composedSentence}"</span>
+				</div>
+			)}
+			<div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-4 py-1.5 text-neutral-300 text-xs backdrop-blur-md">
+				<Hand className="h-3.5 w-3.5 text-neutral-400" />
+				<span className="truncate">
+					{recognizedText
+						? `인식 단어: ${recognizedText}`
+						: "팔과 손을 움직여 '안녕하세요', '감사합니다' 등 수어를 표현해보세요"}
+				</span>
+			</div>
 		</div>
 	);
 }
@@ -198,6 +212,83 @@ function RecentSignsHistory({
 	);
 }
 
+function CustomWordRecorder({
+	references,
+	onRecord,
+	onRemove,
+}: {
+	references: Record<string, number>;
+	onRecord: (word: string) => boolean;
+	onRemove: (word: string) => void;
+}) {
+	const [newWord, setNewWord] = useState("");
+	const [recordHint, setRecordHint] = useState<string | null>(null);
+
+	const handleRecord = () => {
+		const word = newWord.trim();
+		if (!word) return;
+		const ok = onRecord(word);
+		if (ok) {
+			setRecordHint(`'${word}' 동작 샘플을 저장했습니다.`);
+			setNewWord("");
+		} else {
+			setRecordHint("카메라 프레임이 충분히 모이지 않았습니다. 잠시 후 다시 눌러주세요.");
+		}
+	};
+
+	return (
+		<details className="w-full rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 text-neutral-200 text-sm backdrop-blur-sm">
+			<summary className="flex cursor-pointer items-center justify-between font-medium text-neutral-300 text-xs hover:text-white">
+				<span>고급: 모델에 없는 나만의 수어 단어 등록 (DTW)</span>
+				<ChevronDown className="h-4 w-4 text-neutral-400" />
+			</summary>
+			<div className="flex flex-col gap-2.5 pt-3">
+				<p className="text-neutral-400 text-xs leading-relaxed">
+					모델에 없는 단어(예: 병원, 예약, 도움)를 카메라 앞에서 수어로 표현한 뒤 "이 동작 저장"을
+					누르면, 브라우저가 기억하여 다음부터 인식합니다.
+				</p>
+				<div className="flex gap-2">
+					<Input
+						placeholder="단어 이름 (예: 병원)"
+						value={newWord}
+						onChange={(e) => setNewWord(e.target.value)}
+						className="h-9 border-neutral-700 bg-neutral-800/80 text-xs text-white"
+					/>
+					<Button
+						size="sm"
+						disabled={!newWord.trim()}
+						onClick={handleRecord}
+						className="shrink-0 gap-1 bg-blue-600 hover:bg-blue-500"
+					>
+						<Plus className="h-3.5 w-3.5" />
+						동작 저장
+					</Button>
+				</div>
+				{recordHint && <p className="font-medium text-amber-300 text-xs">{recordHint}</p>}
+				{Object.keys(references).length > 0 && (
+					<ul className="mt-1 flex flex-col gap-1 border-neutral-800 border-t pt-2">
+						{Object.entries(references).map(([word, count]) => (
+							<li key={word} className="flex items-center justify-between gap-2 py-0.5 text-xs">
+								<span className="text-neutral-300">
+									{word} <span className="text-neutral-500">({count}개 샘플)</span>
+								</span>
+								<button
+									type="button"
+									onClick={() => onRemove(word)}
+									className="flex items-center gap-1 text-red-400 hover:text-red-300"
+								>
+									<Trash2 className="h-3 w-3" />
+									삭제
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+			</div>
+		</details>
+	);
+}
+
 function GesturesGuide({ onClose }: { onClose: () => void }) {
 	return (
 		<div className="w-full rounded-xl border border-neutral-800 bg-neutral-900/95 p-4 text-neutral-200 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2">
@@ -252,9 +343,13 @@ export function SignCaptureView({
 		activeSign,
 		recentSigns,
 		recognizedText,
+		composedSentence,
+		references,
 		toggleCamera,
 		toggleSkeleton,
 		clearHistory,
+		recordReference,
+		removeReference,
 	} = useSignCapture(room);
 
 	const [showGuide, setShowGuide] = useState(false);
@@ -343,13 +438,24 @@ export function SignCaptureView({
 				{/* Bottom Active Recognized Sign HUD */}
 				{isCameraActive && (
 					<div className="absolute right-3 bottom-3 left-3 flex flex-col items-center">
-						<ActiveSignOverlay activeSign={activeSign} recognizedText={recognizedText} />
+						<ActiveSignOverlay
+							activeSign={activeSign}
+							recognizedText={recognizedText}
+							composedSentence={composedSentence}
+						/>
 					</div>
 				)}
 			</div>
 
 			{/* Recognition History Log */}
 			<RecentSignsHistory recentSigns={recentSigns} onClear={clearHistory} />
+
+			{/* Custom DTW Word Recording Component */}
+			<CustomWordRecorder
+				references={references}
+				onRecord={recordReference}
+				onRemove={removeReference}
+			/>
 
 			{/* Supported Gestures Guide Card */}
 			{showGuide && <GesturesGuide onClose={() => setShowGuide(false)} />}
