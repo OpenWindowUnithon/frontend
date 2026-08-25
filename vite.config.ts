@@ -33,8 +33,13 @@ export default defineConfig({
 		// local dev. Leave VITE_API_BASE_URL empty locally to use this; set it to
 		// the real deployed backend URL for prod (which still needs CORS fixed
 		// there, since this proxy only exists in `vite dev`).
+		// Swap the target to http://localhost:8080 if you're running the Spring
+		// backend locally instead (./gradlew bootRun).
 		proxy: {
-			"/api": "http://localhost:8080",
+			"/api": {
+				target: "https://naru-backend.perasite.dev",
+				changeOrigin: true,
+			},
 		},
 	},
 });
