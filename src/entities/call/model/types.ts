@@ -41,6 +41,10 @@ export const statusResultSchema = z.object({
 });
 export type StatusResult = z.infer<typeof statusResultSchema>;
 
+export const phoneRegistrationSchema = z.object({
+	phoneNumber: z.string().regex(/^01\d{8,9}$/),
+});
+
 export const outgoingCallSchema = z.object({
 	callId: z.string(),
 	roomCode: z.string(),

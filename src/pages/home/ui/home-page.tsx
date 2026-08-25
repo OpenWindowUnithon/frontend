@@ -53,9 +53,10 @@ export function HomePage() {
 	const [myPhone, setMyPhone] = useState(() => localStorage.getItem("my-phone") ?? "");
 	const [digits, setDigits] = useState("");
 	const [communication, setCommunication] = useState<CommunicationMode>("TEXT");
-	const canCall = digits.length >= 10 && myPhone.length >= 10;
 	const phone = formatPhoneNumber(digits);
 	const normalizedMyPhone = myPhone.replace(/\D/g, "").slice(0, 11);
+	const normalizedCalleePhone = /^01\d{8,9}$/.test(digits) ? digits : null;
+	const canCall = normalizedCalleePhone !== null && /^01\d{8,9}$/.test(normalizedMyPhone);
 
 	const registration = useMutation({
 		mutationFn: () => registerPhone(normalizedMyPhone, deviceKey),
@@ -71,7 +72,7 @@ export function HomePage() {
 	}, []);
 
 	const incoming = useQuery({
-		queryKey: ["incoming-call", deviceKey],
+		queryKey: ["incoming-call", deviceKey, normalizedMyPhone],
 		queryFn: () => getIncomingCall(deviceKey),
 		enabled: normalizedMyPhone.length >= 10 && !registration.isPending,
 		refetchInterval: 1_500,
@@ -82,7 +83,7 @@ export function HomePage() {
 
 	useEffect(() => {
 		const call = incoming.data;
-		if (!call) return;
+		if (!incoming.isFetchedAfterMount || !call) return;
 		setSessionKey("participant", call.roomCode, deviceKey);
 		navigate({
 			to: "/call",
@@ -94,15 +95,16 @@ export function HomePage() {
 				phone: formatPhoneNumber(call.callerPhone),
 			},
 		});
-	}, [incoming.data, deviceKey, navigate, communication]);
+	}, [incoming.data, incoming.isFetchedAfterMount, deviceKey, navigate, communication]);
 
 	const outgoing = useMutation({
 		mutationFn: async () => {
+			if (!normalizedCalleePhone) throw new Error("올바른 전화번호를 입력해 주세요.");
 			await registerPhone(normalizedMyPhone, deviceKey);
 			const creatorKey = crypto.randomUUID();
 			const call = await createOutgoingCall(
 				normalizedMyPhone,
-				digits,
+				normalizedCalleePhone,
 				"DEAF",
 				deviceKey,
 				creatorKey,

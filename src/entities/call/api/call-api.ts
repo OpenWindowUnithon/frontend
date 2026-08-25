@@ -10,6 +10,7 @@ import {
 	incomingCallSchema,
 	joinResultSchema,
 	outgoingCallSchema,
+	phoneRegistrationSchema,
 	statusResultSchema,
 } from "../model/types";
 
@@ -19,7 +20,7 @@ export async function registerPhone(phoneNumber: string, participantKey: string)
 		{ phoneNumber },
 		{ headers: { "X-Participant-Key": participantKey } },
 	);
-	return String(data.phoneNumber);
+	return phoneRegistrationSchema.parse(data).phoneNumber;
 }
 
 export async function createOutgoingCall(

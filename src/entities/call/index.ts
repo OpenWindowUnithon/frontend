@@ -29,6 +29,7 @@ export {
 	joinResultSchema,
 	type OutgoingCall,
 	outgoingCallSchema,
+	phoneRegistrationSchema,
 	type StatusResult,
 	statusResultSchema,
 } from "./model/types";
