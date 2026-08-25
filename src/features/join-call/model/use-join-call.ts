@@ -69,6 +69,7 @@ export function useJoinCall() {
 	const participantKeyRef = useRef<string | null>(null);
 	const heartbeatRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 	const manualLeaveRef = useRef(false);
+	const connectingRef = useRef(false);
 	const generationRef = useRef(0);
 
 	const isCurrent = (generation: number) =>
@@ -86,27 +87,33 @@ export function useJoinCall() {
 		role: CallRole,
 		generation: number,
 	) {
-		const room = await connectRoom(livekitUrl, token);
-		if (!isCurrent(generation)) {
-			room.disconnect();
-			return;
-		}
-
-		room.once(RoomEvent.Disconnected, () => {
-			if (!isCurrent(generation)) return;
-			stopHeartbeat();
-			void retryLoop(generation);
-		});
-
-		stopHeartbeat();
-		heartbeatRef.current = setInterval(() => {
-			const participantKey = participantKeyRef.current;
-			if (isCurrent(generation) && participantKey) {
-				sendHeartbeat(callId, participantKey).catch(() => {});
+		if (!isCurrent(generation) || connectingRef.current) return;
+		connectingRef.current = true;
+		try {
+			const room = await connectRoom(livekitUrl, token);
+			if (!isCurrent(generation)) {
+				room.disconnect();
+				return;
 			}
-		}, HEARTBEAT_INTERVAL_MS);
 
-		setState({ room, status: "connected", callId, role });
+			room.once(RoomEvent.Disconnected, () => {
+				if (!isCurrent(generation)) return;
+				stopHeartbeat();
+				void retryLoop(generation);
+			});
+
+			stopHeartbeat();
+			heartbeatRef.current = setInterval(() => {
+				const participantKey = participantKeyRef.current;
+				if (isCurrent(generation) && participantKey) {
+					sendHeartbeat(callId, participantKey).catch(() => {});
+				}
+			}, HEARTBEAT_INTERVAL_MS);
+
+			setState({ room, status: "connected", callId, role });
+		} finally {
+			connectingRef.current = false;
+		}
 	}
 
 	// Reserves the participant slot and moves to "ringing" (or straight to "rejected" if this
@@ -120,7 +127,13 @@ export function useJoinCall() {
 			await createCall(roomCode, getOrCreateSessionKey("creator", roomCode));
 		}
 		const result = await joinCall(roomCode, mode, participantKey);
-		if (!isCurrent(generation)) return;
+		if (!isCurrent(generation)) {
+			const current = paramsRef.current;
+			const replacedBySameJoin =
+				!manualLeaveRef.current && current?.roomCode === roomCode && current.mode === mode;
+			if (!replacedBySameJoin) await rejectCall(result.callId, participantKey).catch(() => {});
+			return;
+		}
 
 		const status =
 			result.status === "REJECTED" || result.status === "ENDED" ? "rejected" : "ringing";
@@ -180,6 +193,7 @@ export function useJoinCall() {
 		generationRef.current += 1;
 		const generation = generationRef.current;
 		manualLeaveRef.current = false;
+		connectingRef.current = false;
 		stopHeartbeat();
 		stateRef.current.room?.disconnect();
 
@@ -198,10 +212,11 @@ export function useJoinCall() {
 	const pollingEnabled = status === "ringing" && callId !== null;
 
 	const statusQuery = useQuery({
-		queryKey: ["call-status", callId],
+		queryKey: ["call-status", callId, participantKeyRef.current],
 		queryFn: () => getCallStatus(callId as string, participantKeyRef.current as string),
 		enabled: pollingEnabled,
 		refetchInterval: RINGING_POLL_MS,
+		refetchIntervalInBackground: true,
 		staleTime: 0,
 	});
 
@@ -241,7 +256,15 @@ export function useJoinCall() {
 			const params = paramsRef.current;
 			const { room, callId: activeCallId } = stateRef.current;
 			const participantKey = participantKeyRef.current;
-			if (params && activeCallId && participantKey) {
+			const currentStatus = stateRef.current.status;
+			if (params && activeCallId && participantKey && currentStatus === "ringing") {
+				rejectCall(activeCallId, participantKey).catch(() => {});
+			} else if (
+				params &&
+				activeCallId &&
+				participantKey &&
+				(currentStatus === "connected" || currentStatus === "reconnecting")
+			) {
 				disconnectCall(activeCallId, participantKey).catch(() => {});
 			}
 			room?.disconnect();
