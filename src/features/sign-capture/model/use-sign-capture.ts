@@ -41,7 +41,7 @@ export interface UseSignCaptureReturn {
 	recentSigns: RecognizedSign[];
 	recognizedText: string | null;
 	wordBuffer: string[];
-	composedSentence: string | null;
+	composedSentences: string[];
 	references: Record<string, number>;
 	isRecordingWord: boolean;
 	recordingSecond: number;
@@ -60,6 +60,10 @@ const NO_SIGN_STREAK_TO_RESET = 5;
 const UTTERANCE_PAUSE_MS = 3000;
 // How many prior turns (both sides combined) to send as context with each compose call.
 const MAX_HISTORY_TURNS = 12;
+// How many past translated sentences to keep around for display -- translation keeps
+// running for every utterance, not just the first, so this is a rolling log, not a cap on
+// how many times compose can fire.
+const MAX_DISPLAYED_SENTENCES = 20;
 // Custom-word recording: the signer repeats the gesture once per second for this long, and
 // the continuous recording is split into one DTW reference sample per second -- this matches
 // dtw.ts's MAX_SAMPLES_PER_WORD (10), so a single take fully replaces a word's reference set.
@@ -196,7 +200,7 @@ export function useSignCapture(
 	const [recentSigns, setRecentSigns] = useState<RecognizedSign[]>([]);
 	const [wordBuffer, setWordBuffer] = useState<string[]>([]);
 	const [recognizedText, setRecognizedText] = useState<string | null>(null);
-	const [composedSentence, setComposedSentence] = useState<string | null>(null);
+	const [composedSentences, setComposedSentences] = useState<string[]>([]);
 	const [references, setReferences] = useState<Record<string, number>>(() => listReferences());
 	const [isRecordingWord, setIsRecordingWord] = useState(false);
 	const [recordingSecond, setRecordingSecond] = useState(0);
@@ -269,7 +273,7 @@ export function useSignCapture(
 		wordBufferRef.current = [];
 		setWordBuffer([]);
 		setRecognizedText(null);
-		setComposedSentence(null);
+		setComposedSentences([]);
 	}, []);
 
 	// Initialize webcam on mount
@@ -312,7 +316,7 @@ export function useSignCapture(
 			const historyForThisTurn = historyRef.current;
 			composeSignSentence(words, historyForThisTurn)
 				.then((sentence) => {
-					setComposedSentence(sentence);
+					setComposedSentences((prev) => [...prev, sentence].slice(-MAX_DISPLAYED_SENTENCES));
 					const turn: ConversationTurn = { speaker: "DEAF", text: sentence };
 					historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
 					if (room) {
@@ -321,7 +325,7 @@ export function useSignCapture(
 				})
 				.catch(() => {
 					const fallback = words.join(" ");
-					setComposedSentence(fallback);
+					setComposedSentences((prev) => [...prev, fallback].slice(-MAX_DISPLAYED_SENTENCES));
 					const turn: ConversationTurn = { speaker: "DEAF", text: fallback };
 					historyRef.current = [...historyRef.current, turn].slice(-MAX_HISTORY_TURNS);
 					if (room) {
@@ -571,7 +575,7 @@ export function useSignCapture(
 		recentSigns,
 		wordBuffer,
 		recognizedText,
-		composedSentence,
+		composedSentences,
 		references,
 		isRecordingWord,
 		recordingSecond,

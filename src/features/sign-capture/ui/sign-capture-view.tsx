@@ -4,6 +4,7 @@ import {
 	Bot,
 	Camera,
 	CameraOff,
+	CheckCircle2,
 	ChevronDown,
 	Eye,
 	EyeOff,
@@ -90,41 +91,73 @@ function CameraStatusBar({
 	);
 }
 
-function SentenceResultBanner({
-	composedSentence,
-	isComposing,
-}: {
-	composedSentence: string | null;
-	isComposing: boolean;
-}) {
-	if (!composedSentence && !isComposing) return null;
+// Live single-word recognition indicator -- a compact badge, not the full accumulated
+// caption (the translated-sentence list below now covers that role), just enough to
+// confirm recognition is actually running while signing.
+function ActiveSignBadge({ activeSign }: { activeSign: RecognizedSign | null }) {
+	if (!activeSign) return null;
 
 	return (
-		<div className="flex w-full items-center justify-between rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-3.5 text-emerald-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
-			<div className="flex items-center gap-3">
-				<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300">
+		<div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-black/70 px-3 py-1 text-white text-xs shadow-lg backdrop-blur-md animate-in fade-in">
+			<span className="text-base">{activeSign.icon}</span>
+			<span className="font-semibold">{activeSign.label}</span>
+			<span className="rounded border border-blue-400/30 bg-blue-500/20 px-1.5 py-0.5 font-semibold text-[10px] text-blue-300">
+				{Math.round(activeSign.confidence * 100)}%
+			</span>
+			<span className="flex items-center gap-1 font-medium text-emerald-400">
+				<CheckCircle2 className="h-3 w-3" />
+				인식 중
+			</span>
+		</div>
+	);
+}
+
+const MAX_SHOWN_SENTENCES = 5;
+
+// Rolling log of translated sentences (newest first) rather than a single line that gets
+// replaced -- translation keeps firing for every utterance, and showing only the latest one
+// made it look like it only ever ran once.
+function SentenceResultBanner({
+	composedSentences,
+	isComposing,
+}: {
+	composedSentences: string[];
+	isComposing: boolean;
+}) {
+	if (composedSentences.length === 0 && !isComposing) return null;
+
+	const recent = composedSentences
+		.map((sentence, index) => ({ sentence, index }))
+		.slice(-MAX_SHOWN_SENTENCES)
+		.reverse();
+
+	return (
+		<div className="flex w-full flex-col gap-2.5 rounded-2xl border border-emerald-500/40 bg-emerald-950/40 p-3.5 text-emerald-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
+			<div className="flex items-center gap-2">
+				<div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300">
 					{isComposing ? (
 						<Activity className="h-4 w-4 animate-spin" />
 					) : (
 						<Bot className="h-4 w-4" />
 					)}
 				</div>
-				<div>
-					<div className="flex items-center gap-2">
-						<span className="font-semibold text-emerald-400 text-xs">
-							{isComposing ? "LLM 자연어 문장 변환 중..." : "AI 실시간 번역 문장"}
-						</span>
-					</div>
-					<p className="mt-0.5 font-bold text-sm text-white">
-						{composedSentence ?? "단어들을 자연스러운 문장으로 조합하고 있습니다..."}
-					</p>
-				</div>
-			</div>
-			{!isComposing && (
-				<span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 font-medium text-[11px] text-emerald-300">
-					음성 발화 완료
+				<span className="font-semibold text-emerald-400 text-xs">
+					{isComposing ? "LLM 자연어 문장 변환 중..." : "AI 실시간 번역 문장"}
 				</span>
-			)}
+			</div>
+			<div className="flex flex-col gap-1.5 pl-1">
+				{isComposing && recent.length === 0 && (
+					<p className="text-sm text-white/70">단어들을 자연스러운 문장으로 조합하고 있습니다...</p>
+				)}
+				{recent.map(({ sentence, index }, i) => (
+					<p
+						key={index}
+						className={i === 0 ? "font-bold text-sm text-white" : "text-emerald-200/60 text-xs"}
+					>
+						{sentence}
+					</p>
+				))}
+			</div>
 		</div>
 	);
 }
@@ -365,8 +398,9 @@ export function SignCaptureView({
 		detectedHandsCount,
 		isArmDetected,
 		isComposing,
+		activeSign,
 		recentSigns,
-		composedSentence,
+		composedSentences,
 		references,
 		isRecordingWord,
 		recordingSecond,
@@ -462,10 +496,17 @@ export function SignCaptureView({
 				{(!isCameraActive || cameraError) && (
 					<CameraDisabledState cameraError={cameraError} onRetry={toggleCamera} />
 				)}
+
+				{/* Live single-word recognition indicator */}
+				{isCameraActive && (
+					<div className="absolute right-3 bottom-3 left-3 flex justify-center">
+						<ActiveSignBadge activeSign={activeSign} />
+					</div>
+				)}
 			</div>
 
 			{/* AI Translated Natural Sentence Banner */}
-			<SentenceResultBanner composedSentence={composedSentence} isComposing={isComposing} />
+			<SentenceResultBanner composedSentences={composedSentences} isComposing={isComposing} />
 
 			{/* Recognition History Log */}
 			<RecentSignsHistory recentSigns={recentSigns} onClear={clearHistory} />
