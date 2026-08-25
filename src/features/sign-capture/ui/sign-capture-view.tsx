@@ -20,18 +20,18 @@ import { useEffect, useState } from "react";
 import type { CaptionType } from "@/entities/caption";
 import { Button, Input } from "@/shared/ui";
 import { DEFAULT_DTW_THRESHOLD } from "../model/dtw";
-import { KSL_WORD_METADATA } from "../model/sign-model";
 import type { RecognizedSign } from "../model/types";
 import {
 	type RecognitionDebug,
 	UTTERANCE_PAUSE_MS,
 	useSignCapture,
 } from "../model/use-sign-capture";
+import { KSL_WORD_METADATA } from "../model/word-metadata";
 
-// Only the real, sequence-trained KSL words -- the guide used to also list a handful of
-// single-frame static gestures (thumbs up, OK sign, finger-counted numbers), but that
-// recognizer was removed (see use-sign-capture.ts's docstring), so listing them here
-// would promise something that no longer works.
+// Suggested starter vocabulary for the guide -- recognition is DTW-only now, so none of these
+// (or any word) are recognized until the signer actually records them via the "고급: 나만의
+// 수어 단어 등록" flow. This list is just icons/descriptions to help someone decide what to
+// record first, not a promise that these already work.
 const KSL_VOCABULARY_LIST = Object.entries(KSL_WORD_METADATA).map(([label, meta]) => ({
 	label,
 	icon: meta.icon,
@@ -63,7 +63,7 @@ function CameraStatusBar({
 			{isModelReady && isCameraActive && (
 				<span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-0.5 font-medium text-emerald-300 text-xs backdrop-blur-md whitespace-nowrap">
 					<Sparkles className="h-3 w-3" />
-					하이브리드 AI
+					동작 인식 준비됨
 				</span>
 			)}
 
@@ -117,23 +117,18 @@ function ActiveSignBadge({ activeSign }: { activeSign: RecognizedSign | null }) 
 	);
 }
 
-// Always-on technical readout of what the recognizer is actually seeing -- both LSTM's top
-// guess/confidence and the closest DTW reference (even above threshold, so a near-miss custom
-// word is visible instead of the recognizer just looking silently broken).
+// Always-on technical readout of what the recognizer is actually seeing -- the closest DTW
+// reference (even above threshold, so a near-miss custom word is visible instead of the
+// recognizer just looking silently broken).
 function RecognitionDebugStrip({ debug }: { debug: RecognitionDebug | null }) {
 	if (!debug) return null;
 
-	const lstmText = debug.lstmLabel
-		? `${debug.lstmLabel} ${Math.round(debug.lstmConfidence * 100)}%`
-		: `없음 (${Math.round(debug.lstmConfidence * 100)}%)`;
 	const dtwText = debug.dtwWord
 		? `${debug.dtwWord} · 거리 ${debug.dtwDistance?.toFixed(2)} / 임계값 ${DEFAULT_DTW_THRESHOLD}`
 		: "저장된 커스텀 단어 없음";
 
 	return (
 		<div className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-neutral-800 bg-neutral-900/60 px-3 py-1.5 font-mono text-[11px] text-neutral-400">
-			<span>LSTM: {lstmText}</span>
-			<span className="text-neutral-700">|</span>
 			<span>DTW 최근접: {dtwText}</span>
 		</div>
 	);
@@ -453,7 +448,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 			<div className="mb-3 flex items-center justify-between border-neutral-800 border-b pb-2">
 				<h5 className="flex items-center gap-2 font-semibold text-sm text-white">
 					<Sparkles className="h-4 w-4 text-blue-400" />
-					지원하는 한국수어(KSL) 단어
+					추천 시작 단어 (아래에서 직접 녹화해야 인식됩니다)
 				</h5>
 				<button
 					type="button"
@@ -481,7 +476,7 @@ function GesturesGuide({ onClose }: { onClose: () => void }) {
 	);
 }
 
-/** Camera preview for the signer — runs Hand & Pose Landmarker locally, recognizing signs from the 30-frame sequence window (LSTM + DTW). */
+/** Camera preview for the signer — runs Hand & Pose Landmarker locally, recognizing signs from the 30-frame sequence window via DTW matching against signer-recorded words. */
 export function SignCaptureView({
 	room = null,
 	captions = [],
@@ -615,7 +610,7 @@ export function SignCaptureView({
 				)}
 			</div>
 
-			{/* Recognition Clarity: what LSTM/DTW are actually seeing right now */}
+			{/* Recognition Clarity: what DTW is actually seeing right now */}
 			<RecognitionDebugStrip debug={recognitionDebug} />
 
 			{/* When the buffered words will be sent off for translation */}

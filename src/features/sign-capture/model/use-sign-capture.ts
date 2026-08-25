@@ -22,13 +22,11 @@ import {
 	RollingWindow,
 	splitHandsByHandedness,
 } from "./landmarks";
-import { CONFIDENCE_THRESHOLD, KSL_WORD_METADATA, predictSign } from "./sign-model";
 import type { RecognizedSign } from "./types";
+import { KSL_WORD_METADATA } from "./word-metadata";
 
-/** Live LSTM/DTW readout for the recognition-clarity debug strip -- not used for logic. */
+/** Live DTW readout for the recognition-clarity debug strip -- not used for logic. */
 export interface RecognitionDebug {
-	lstmLabel: string | null;
-	lstmConfidence: number;
 	dtwWord: string | null;
 	dtwDistance: number | null;
 }
@@ -67,7 +65,10 @@ export interface UseSignCaptureReturn {
 	removeReference: (word: string) => void;
 }
 
-const CONSECUTIVE_REQUIRED = 2;
+// A DTW match already represents a whole-window judgment (the last 30 frames as a whole
+// resemble a reference), not a per-frame class score, so a single frame under threshold is
+// enough to confirm -- see updateCandidateStreak.
+const REQUIRED_STREAK = 1;
 const NO_SIGN_STREAK_TO_RESET = 5;
 export const UTTERANCE_PAUSE_MS = 3000;
 // How many prior turns (both sides combined) to send as context with each compose call.
@@ -81,10 +82,10 @@ const MAX_DISPLAYED_SENTENCES = 20;
 // matches dtw.ts's MAX_SAMPLES_PER_WORD (10), so a single take fully replaces a word's
 // reference set. REP_INTERVAL_SECONDS is deliberately close to how long the live recognition
 // window (WINDOW_FRAMES=30 processed frames, landmarks.ts) actually spans in wall-clock time
-// -- on a typical device running both landmarkers plus periodic LSTM inference per frame,
-// that's on the order of 1-2s, not a flat 1s. Pacing reps faster than that risks each
-// recorded sample capturing only part of the gesture, which DTW's time-warping can't fix
-// (warping absorbs speed differences, not missing motion).
+// -- on a typical device running the hand+pose landmarkers per frame, that's on the order of
+// 1-2s, not a flat 1s. Pacing reps faster than that risks each recorded sample capturing only
+// part of the gesture, which DTW's time-warping can't fix (warping absorbs speed differences,
+// not missing motion).
 const RECORD_REPS = 10;
 const REP_INTERVAL_SECONDS = 2;
 const RECORD_TOTAL_SECONDS = RECORD_REPS * REP_INTERVAL_SECONDS;
@@ -95,25 +96,20 @@ const MIN_SEGMENT_FRAMES = 5;
 interface ResolvedPrediction {
 	finalCandidate: string | null;
 	finalConfidence: number;
-	isDtw: boolean;
 	debug: RecognitionDebug;
 }
 
-// Combines the LSTM's per-frame classification with the closest DTW reference match --
-// DTW wins whenever a custom word matches, LSTM is the fallback for the 11 base words. A
-// registered custom word is a deliberate, user-trained signal; the base LSTM model was
-// previously checked first and, since it always emits *some* top-1 guess (softmax over 12
-// classes, including "no action"), it routinely produced a confident-enough guess for
-// arbitrary hand motion and permanently shadowed DTW candidates -- a custom word could match
-// perfectly and still never win. Packages a debug snapshot alongside the result -- pulled out
-// of handleLandmarkerResult's predictSign callback to keep that callback's cognitive
-// complexity down.
-function resolvePrediction(
-	frames: number[][],
-	label: string | null,
-	confidence: number,
-): ResolvedPrediction {
-	const lstmCandidate = label && confidence >= CONFIDENCE_THRESHOLD ? label : null;
+// Finds the closest DTW reference match for the current window. Recognition is DTW-only: a
+// pretrained LSTM classifier for a fixed 11-word vocabulary used to run alongside this and be
+// checked first, but it always emitted *some* confident top-1 guess (softmax over 12 classes,
+// including "no action") for arbitrary hand motion, and since it was checked first it
+// permanently shadowed DTW candidates -- a registered custom word could match its reference
+// perfectly and still never be the one shown. Dropping it means every word, including a
+// starter vocabulary, now has to actually be recorded by the signer, but recognition behavior
+// becomes fully predictable: whatever you record is what gets recognized. Packages a debug
+// snapshot alongside the result -- pulled out of handleLandmarkerResult to keep that
+// callback's cognitive complexity down.
+function resolvePrediction(frames: number[][]): ResolvedPrediction {
 	// Always compute the closest DTW reference (even above threshold) so the debug readout
 	// can show it -- otherwise a near-miss custom word is invisible to the user instead of
 	// showing "so close, just tune the threshold or re-record."
@@ -125,12 +121,9 @@ function resolvePrediction(
 	const dtwConfidence = dtwMatch ? Math.max(0, 1 - dtwMatch.distance / DEFAULT_DTW_THRESHOLD) : 0;
 
 	return {
-		finalCandidate: dtwMatch?.word ?? lstmCandidate ?? null,
-		finalConfidence: dtwMatch ? dtwConfidence : confidence,
-		isDtw: Boolean(dtwMatch),
+		finalCandidate: dtwMatch?.word ?? null,
+		finalConfidence: dtwConfidence,
 		debug: {
-			lstmLabel: label,
-			lstmConfidence: confidence,
 			dtwWord: dtwBest?.word ?? null,
 			dtwDistance: dtwBest?.distance ?? null,
 		},
@@ -174,7 +167,7 @@ interface PredictionState {
 	lastConfirmedCandidate: string | null;
 }
 
-// Confirms a candidate once it has held steady for `requiredStreak` frames, as long as it
+// Confirms a candidate once it has held steady for REQUIRED_STREAK frames, as long as it
 // isn't the same word already confirmed last (which would just be the signer continuing to
 // hold the same pose). Gating on "already confirmed *this word*" rather than "already
 // confirmed *something* this segment" is what lets consecutive different words (A -> B with
@@ -182,17 +175,9 @@ interface PredictionState {
 // signs performed back-to-back) each get confirmed on their own -- previously a single
 // shared `insertedForSegment` flag only re-armed after a sustained no-sign streak, so a
 // second word right after the first was silently dropped unless the signer paused.
-//
-// requiredStreak is 1 for DTW-sourced candidates (see handleLandmarkerResult): a DTW match
-// already means "the whole last-30-frame window closely matches the reference," a judgment
-// over the full window, unlike the LSTM's per-frame class score -- and because that window
-// slides by one frame at a time, a genuine match can occur for only a single frame before
-// sliding past alignment, so requiring 2 consecutive hits (as for LSTM) made custom words
-// effectively never confirm in practice.
 function updateCandidateStreak(
 	state: PredictionState,
 	candidate: string | null,
-	requiredStreak: number = CONSECUTIVE_REQUIRED,
 ): { isConfirmed: boolean } {
 	if (candidate === state.lastCandidate) {
 		state.candidateStreak += 1;
@@ -208,7 +193,7 @@ function updateCandidateStreak(
 		return { isConfirmed: false };
 	}
 
-	if (state.candidateStreak >= requiredStreak && state.lastConfirmedCandidate !== candidate) {
+	if (state.candidateStreak >= REQUIRED_STREAK && state.lastConfirmedCandidate !== candidate) {
 		state.lastConfirmedCandidate = candidate;
 		return { isConfirmed: true };
 	}
@@ -217,13 +202,16 @@ function updateCandidateStreak(
 }
 
 /**
- * Captures webcam stream and recognizes signs purely from the 30-frame sequence window
- * (LSTM for the trained 11 words, DTW for custom-recorded ones) -- sign language is
+ * Captures webcam stream and recognizes signs purely from the 30-frame sequence window via
+ * DTW matching against signer-recorded reference samples (see dtw.ts) -- sign language is
  * distinguished by motion over time, not a single frame, so there is deliberately no
  * single-frame/static-pose classifier here (an earlier version had one for zero-latency
  * generic gestures like "thumbs up"/numbers; it was removed because judging any KSL sign
  * from one still frame produced false positives, especially during the pause between
- * words that the utterance-compose debounce relies on).
+ * words that the utterance-compose debounce relies on). There is also no pretrained
+ * classifier for a fixed vocabulary -- every recognized word has to be recorded by the
+ * signer first, which trades zero-setup recognition for fully predictable behavior (see
+ * resolvePrediction's docstring for why the earlier hybrid LSTM+DTW setup was dropped).
  * Accumulates confirmed words and converts them to natural sentences via LLM translation.
  */
 export function useSignCapture(
@@ -234,7 +222,7 @@ export function useSignCapture(
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const streamRef = useRef<MediaStream | null>(null);
 
-	// 30-Frame Rolling Window & LSTM State
+	// 30-Frame Rolling Window & DTW Recognition State
 	const windowRef = useRef(new RollingWindow());
 	const latestPoseRef = useRef<PoseLandmarkerResult | null>(null);
 	const predictionStateRef = useRef<PredictionState>({
@@ -242,7 +230,6 @@ export function useSignCapture(
 		candidateStreak: 0,
 		lastConfirmedCandidate: null,
 	});
-	const predictingRef = useRef(false);
 
 	// Word buffer & Utterance state for LLM translation
 	const wordBufferRef = useRef<string[]>([]);
@@ -437,16 +424,12 @@ export function useSignCapture(
 	});
 
 	const handleKslPrediction = useCallback(
-		(candidate: string | null, confidence: number, isDtw: boolean) => {
+		(candidate: string | null, confidence: number) => {
 			const meta = candidate ? KSL_WORD_METADATA[candidate] : undefined;
 			const icon = meta?.icon ?? "🤟";
-			const desc = meta?.description ?? `KSL 수어: ${candidate}`;
+			const desc = meta?.description ?? `등록한 수어: ${candidate}`;
 
-			const { isConfirmed } = updateCandidateStreak(
-				predictionStateRef.current,
-				candidate,
-				isDtw ? 1 : CONSECUTIVE_REQUIRED,
-			);
+			const { isConfirmed } = updateCandidateStreak(predictionStateRef.current, candidate);
 
 			if (candidate) {
 				setActiveSign({
@@ -482,8 +465,8 @@ export function useSignCapture(
 		[commitConfirmedSign],
 	);
 
-	// Main frame processing callback: sequence-only recognition (LSTM + DTW), no
-	// single-frame static gesture path.
+	// Main frame processing callback: sequence-only DTW recognition, no single-frame
+	// static gesture path.
 	const handleLandmarkerResult = useCallback(
 		(handResult: HandLandmarkerResult) => {
 			const hands = handResult.landmarks ?? [];
@@ -515,27 +498,11 @@ export function useSignCapture(
 			if (recordingWordRef.current) return;
 
 			const frames = windowRef.current.toArray();
-			if (!frames || predictingRef.current) return;
+			if (!frames) return;
 
-			predictingRef.current = true;
-			predictSign(frames)
-				.then(({ label, confidence }) => {
-					const { finalCandidate, finalConfidence, isDtw, debug } = resolvePrediction(
-						frames,
-						label,
-						confidence,
-					);
-					setRecognitionDebug(debug);
-					if (finalCandidate) {
-						handleKslPrediction(finalCandidate, finalConfidence, isDtw);
-					}
-				})
-				.catch((err) => {
-					console.error("Sign prediction error:", err);
-				})
-				.finally(() => {
-					predictingRef.current = false;
-				});
+			const { finalCandidate, finalConfidence, debug } = resolvePrediction(frames);
+			setRecognitionDebug(debug);
+			handleKslPrediction(finalCandidate, finalConfidence);
 		},
 		[showSkeleton, handleKslPrediction],
 	);
