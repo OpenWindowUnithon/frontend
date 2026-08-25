@@ -1,3 +1,4 @@
+import axios from "axios";
 import { type Room, RoomEvent } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -57,12 +58,16 @@ export function useJoinCall() {
 		heartbeatRef.current = undefined;
 	};
 
+	// "connected" on success; "retry" for anything that might resolve itself
+	// (network blip, transient 5xx); "fatal" for errors retrying can't fix
+	// (4xx — bad room code, rejected mode, etc.) so we can fail fast instead of
+	// burning the full 30s retry window on something that will never succeed.
 	async function connect(
 		params: JoinParams,
 		isRetry: boolean,
 		generation: number,
-	): Promise<boolean> {
-		if (!isCurrent(generation)) return false;
+	): Promise<"connected" | "retry" | "fatal"> {
+		if (!isCurrent(generation)) return "retry";
 		setState((prev) => ({ ...prev, status: isRetry ? "reconnecting" : "connecting" }));
 		try {
 			const { roomCode, mode, isCreator } = params;
@@ -75,7 +80,7 @@ export function useJoinCall() {
 
 			if (!isCurrent(generation)) {
 				room.disconnect();
-				return false;
+				return "retry";
 			}
 
 			room.once(RoomEvent.Disconnected, () => {
@@ -90,10 +95,23 @@ export function useJoinCall() {
 			}, HEARTBEAT_INTERVAL_MS);
 
 			setState({ room, status: "connected", callId: result.callId });
-			return true;
-		} catch {
-			return false;
+			return "connected";
+		} catch (error) {
+			console.error("[join-call] connect failed", error);
+			const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+			return status !== undefined && status < 500 ? "fatal" : "retry";
 		}
+	}
+
+	// Waits out one retry delay, then attempts a connect — pulled out of
+	// retryLoop purely to keep that function's cognitive complexity in check.
+	async function retryOnce(
+		params: JoinParams,
+		generation: number,
+	): Promise<"connected" | "retry" | "fatal" | "stale"> {
+		await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+		if (!isCurrent(generation)) return "stale";
+		return connect(params, true, generation);
 	}
 
 	async function retryLoop(generation: number): Promise<void> {
@@ -102,9 +120,9 @@ export function useJoinCall() {
 		setState((prev) => ({ ...prev, room: null, status: "reconnecting" }));
 
 		for (let attempt = 0; attempt < MAX_RETRIES && isCurrent(generation); attempt += 1) {
-			await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-			if (!isCurrent(generation)) return;
-			if (await connect(params, true, generation)) return;
+			const result = await retryOnce(params, generation);
+			if (result === "connected" || result === "stale") return;
+			if (result === "fatal") break;
 		}
 		if (isCurrent(generation)) setState({ room: null, status: "error", callId: null });
 	}
@@ -123,8 +141,11 @@ export function useJoinCall() {
 		const params = { roomCode, mode, isCreator };
 		paramsRef.current = params;
 		setState({ room: null, status: "connecting", callId: null });
-		const ok = await connect(params, false, generation);
-		if (!ok) void retryLoop(generation);
+		const result = await connect(params, false, generation);
+		if (result === "retry") void retryLoop(generation);
+		else if (result === "fatal" && isCurrent(generation)) {
+			setState({ room: null, status: "error", callId: null });
+		}
 	}, []);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above join

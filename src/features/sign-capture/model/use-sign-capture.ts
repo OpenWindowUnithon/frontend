@@ -31,15 +31,21 @@ export function useSignCapture(room: Room | null) {
 	const lastEmitRef = useRef(0);
 
 	useEffect(() => {
+		let cancelled = false;
 		let stream: MediaStream | undefined;
 		navigator.mediaDevices
 			.getUserMedia({ video: true })
 			.then((s) => {
+				if (cancelled) {
+					for (const track of s.getTracks()) track.stop();
+					return;
+				}
 				stream = s;
 				if (videoRef.current) videoRef.current.srcObject = s;
 			})
 			.catch(() => setCameraError(true));
 		return () => {
+			cancelled = true;
 			for (const track of stream?.getTracks() ?? []) track.stop();
 		};
 	}, []);

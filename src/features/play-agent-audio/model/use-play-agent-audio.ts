@@ -26,6 +26,15 @@ export function usePlayAgentAudio(room: Room | null) {
 			element.play().catch(() => setNeedsPlayTap(true));
 		};
 
+		// The agent's track may already be subscribed by the time this effect
+		// runs (React state propagation lags the LiveKit connection) — catch up
+		// on already-subscribed publications before listening for future ones.
+		for (const participant of room.remoteParticipants.values()) {
+			for (const publication of participant.trackPublications.values()) {
+				if (publication.track) onTrackSubscribed(publication.track, publication);
+			}
+		}
+
 		room.on(RoomEvent.TrackSubscribed, onTrackSubscribed);
 		return () => {
 			room.off(RoomEvent.TrackSubscribed, onTrackSubscribed);
