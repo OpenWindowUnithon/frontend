@@ -7,7 +7,14 @@ import {
 import { PrefixIcon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import type { Room } from "livekit-client";
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
+import {
+	type Dispatch,
+	type SetStateAction,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import {
 	type CallMode,
 	type CommunicationMode,
@@ -391,19 +398,22 @@ function ConversationLog({
 	timeline,
 	timelineVersion,
 	placeholder,
+	pendingGlosses = [],
 }: {
 	timeline: TimelineItem[];
 	timelineVersion: string;
 	placeholder: string;
+	pendingGlosses?: string[];
 }) {
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
+	const pendingGlossText = pendingGlosses.join(" ");
 
 	useEffect(() => {
-		if (timelineVersion && autoScroll.current) {
+		if ((timelineVersion || pendingGlossText) && autoScroll.current) {
 			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 		}
-	}, [timelineVersion]);
+	}, [timelineVersion, pendingGlossText]);
 
 	return (
 		<div
@@ -412,7 +422,9 @@ function ConversationLog({
 			aria-live="polite"
 			role="log"
 		>
-			{timeline.length === 0 && <p className="text-muted-foreground">{placeholder}</p>}
+			{timeline.length === 0 && pendingGlosses.length === 0 && (
+				<p className="text-muted-foreground">{placeholder}</p>
+			)}
 			{timeline.map((item) =>
 				item.kind === "caption" ? (
 					<Caption caption={item.caption} align={item.align} key={`caption-${item.caption.id}`} />
@@ -425,6 +437,16 @@ function ConversationLog({
 						</div>
 					</div>
 				),
+			)}
+			{pendingGlosses.length > 0 && (
+				<div className="flex justify-end">
+					<div className="w-fit max-w-[85%] rounded-3xl rounded-tr-lg bg-secondary px-5 py-3.5 text-foreground">
+						<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">
+							<span className="sr-only">인식된 수어 글로스: </span>
+							{pendingGlossText}
+						</p>
+					</div>
+				</div>
 			)}
 			<div ref={bottomRef} />
 		</div>
@@ -486,6 +508,7 @@ export function CallRoom(props: CallRoomProps) {
 	const [communication, setCommunication] = useState<CommunicationMode>(props.communication);
 	const [textDraft, setTextDraft] = useState("");
 	const [messages, setMessages] = useState<TextMessage[]>([]);
+	const [pendingGlosses, setPendingGlosses] = useState<string[]>([]);
 	const captions = useReceiveCaptions(props.room);
 	const incomingChat = useIncomingChatCaptions(props.room);
 	const captionGroups =
@@ -496,6 +519,17 @@ export function CallRoom(props: CallRoomProps) {
 				]
 			: [{ captions, align: "start" as const }];
 	const { timeline, timelineVersion } = useTimeline(captionGroups, messages);
+	const handleGlossesChange = useCallback((glosses: string[], isComposing: boolean) => {
+		if (glosses.length > 0) {
+			setPendingGlosses(glosses);
+		} else if (!isComposing) {
+			setPendingGlosses([]);
+		}
+	}, []);
+	const handleSignSentence = useCallback((text: string) => {
+		setPendingGlosses([]);
+		setMessages((items) => [...items, { id: Date.now(), text, state: "sent" }]);
+	}, []);
 	const endCall = async () => {
 		setEnding(true);
 		try {
@@ -565,6 +599,7 @@ export function CallRoom(props: CallRoomProps) {
 						timeline={timeline}
 						timelineVersion={timelineVersion}
 						placeholder="수어로 말하면 이곳에 실시간으로 표시돼요."
+						pendingGlosses={pendingGlosses}
 					/>
 					<div
 						className="absolute right-4 top-3 aspect-3/4 w-24 overflow-hidden rounded-2xl border border-border shadow-lg sm:w-28"
@@ -574,9 +609,8 @@ export function CallRoom(props: CallRoomProps) {
 							room={props.room}
 							captions={captions}
 							pip
-							onSentence={(text) => {
-								setMessages((items) => [...items, { id: Date.now(), text, state: "sent" }]);
-							}}
+							onGlossesChange={handleGlossesChange}
+							onSentence={handleSignSentence}
 						/>
 					</div>
 				</div>

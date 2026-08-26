@@ -500,6 +500,7 @@ export function SignCaptureView({
 	compact = false,
 	pip = false,
 	onSentence,
+	onGlossesChange,
 }: {
 	room?: Room | null;
 	captions?: CaptionType[];
@@ -507,6 +508,7 @@ export function SignCaptureView({
 	compact?: boolean;
 	pip?: boolean;
 	onSentence?: (text: string) => void;
+	onGlossesChange?: (glosses: string[], isComposing: boolean) => void;
 }) {
 	const {
 		videoRef,
@@ -543,6 +545,10 @@ export function SignCaptureView({
 	} = useSignCapture(room, captions, onSentence);
 
 	const [showGuide, setShowGuide] = useState(false);
+
+	useEffect(() => {
+		onGlossesChange?.(wordBuffer, isComposing);
+	}, [wordBuffer, isComposing, onGlossesChange]);
 
 	if (pip) {
 		return (
