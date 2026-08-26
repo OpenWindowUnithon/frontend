@@ -1,5 +1,5 @@
 import { IconPhoneFill, IconPhoneXmarkFill } from "@karrotmarket/react-monochrome-icon";
-import { PrefixIcon } from "@seed-design/react";
+import { Icon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { CallRole } from "@/entities/call";
@@ -68,6 +68,67 @@ export function JoinCall(props: JoinCallProps) {
 			? "상대방이 받지 않았어요"
 			: "통화가 취소됐어요";
 
+	if (incoming) {
+		return (
+			<section
+				className="fixed inset-0 z-30 mx-auto flex w-full max-w-md flex-col items-center overflow-hidden bg-[radial-gradient(circle_at_50%_30%,#34445f_0%,#172033_42%,#090d14_100%)] px-6 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-[max(2.5rem,env(safe-area-inset-top))] text-center text-white"
+				aria-label="수신 전화"
+			>
+				<div className="absolute top-1/4 size-72 rounded-full bg-white/5 blur-3xl" aria-hidden />
+				<p className="relative text-base font-medium text-white/70">수신 전화</p>
+				<div className="relative mt-16">
+					<span
+						className="absolute inset-0 animate-ping rounded-full bg-white/10 [animation-duration:2.4s]"
+						aria-hidden
+					/>
+					<Avatar
+						className="relative shadow-[0_0_0_10px_rgba(255,255,255,0.08)]"
+						size="108"
+						fallback={<IdentityPlaceholder identity="person" />}
+					/>
+				</div>
+				<h2 className="relative mt-9 text-3xl font-bold tracking-tight">{props.contactName}</h2>
+				{props.contactName !== props.phone && (
+					<p className="relative mt-2 text-lg text-white/60">{props.phone}</p>
+				)}
+				<p className="relative mt-4 text-sm text-white/50">전화가 왔습니다</p>
+
+				<div className="relative mt-auto grid w-full max-w-xs grid-cols-2 gap-16 pt-16">
+					<div className="flex flex-col items-center gap-3">
+						<ActionButton
+							layout="iconOnly"
+							variant="criticalSolid"
+							size="large"
+							className="size-18 rounded-full"
+							loading={props.rejecting}
+							disabled={busy}
+							onClick={() => void props.onReject()}
+							aria-label="전화 거절"
+						>
+							<Icon svg={<IconPhoneXmarkFill />} />
+						</ActionButton>
+						<span className="text-sm font-medium">거절</span>
+					</div>
+					<div className="flex flex-col items-center gap-3">
+						<ActionButton
+							layout="iconOnly"
+							variant="neutralSolid"
+							size="large"
+							className="size-18 rounded-full bg-bg-positive-solid !text-white hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed"
+							loading={props.accepting}
+							disabled={busy}
+							onClick={() => void props.onAccept()}
+							aria-label="전화 수락"
+						>
+							<Icon svg={<IconPhoneFill className="!text-white" />} />
+						</ActionButton>
+						<span className="text-sm font-medium">수락</span>
+					</div>
+				</div>
+			</section>
+		);
+	}
+
 	return (
 		<section
 			className="flex w-full flex-1 flex-col items-center px-6 pb-6 pt-10 text-center"
@@ -76,7 +137,7 @@ export function JoinCall(props: JoinCallProps) {
 			<Avatar
 				className="shadow-[0_0_0_10px_var(--seed-color-bg-layer-fill)]"
 				size="108"
-				fallback={<IdentityPlaceholder identity="business" />}
+				fallback={<IdentityPlaceholder identity="person" />}
 			/>
 			<h2 className="mt-8 text-3xl font-bold tracking-tight">{props.contactName}</h2>
 			{props.contactName !== props.phone && (
@@ -89,13 +150,6 @@ export function JoinCall(props: JoinCallProps) {
 						<IconPhoneXmarkFill className="size-8" aria-hidden />
 					</div>
 					<h3 className="mt-5 text-2xl font-bold">{rejectedTitle}</h3>
-				</>
-			)}
-
-			{incoming && (
-				<>
-					<p className="mt-12 text-base font-semibold text-muted-foreground">전화가 왔습니다</p>
-					<h3 className="mt-3 text-2xl font-bold">통화하시겠어요?</h3>
 				</>
 			)}
 
@@ -123,29 +177,6 @@ export function JoinCall(props: JoinCallProps) {
 			)}
 
 			<div className="mt-auto w-full max-w-sm pt-10">
-				{incoming && (
-					<div className="grid grid-cols-2 gap-3">
-						<ActionButton
-							variant="neutralOutline"
-							size="large"
-							disabled={busy}
-							onClick={() => void props.onReject()}
-						>
-							거절
-						</ActionButton>
-						<ActionButton
-							variant="neutralSolid"
-							size="large"
-							className="bg-bg-positive-solid hover:bg-bg-positive-solid-pressed"
-							loading={props.accepting}
-							disabled={busy}
-							onClick={() => void props.onAccept()}
-						>
-							<PrefixIcon svg={<IconPhoneFill />} /> 수락
-						</ActionButton>
-					</div>
-				)}
-
 				{outgoing && (
 					<ActionButton
 						variant="neutralOutline"

@@ -46,6 +46,7 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
 const STATUS_POLL_INTERVAL_MS = 1_500;
 const RETRY_DELAY_MS = 5_000;
 const MAX_RETRIES = 6;
+const relayNotice = new Audio("/audio/naru-relay-notice.mp3");
 // How many times (and how far apart) to re-check call status right after a LiveKit disconnect
 // before giving up and showing the "reconnecting" UI. The disconnect notification can arrive
 // over the realtime connection before the call-status row finishes updating server-side, so a
@@ -326,6 +327,10 @@ export function useJoinCall() {
 
 	const accept = async () => {
 		if (stateRef.current.role !== "CALLEE") return;
+		if (paramsRef.current?.mode === "HEARING") {
+			relayNotice.currentTime = 0;
+			void relayNotice.play().catch(() => {});
+		}
 		const generation = generationRef.current;
 		let result: StatusResult;
 		try {
