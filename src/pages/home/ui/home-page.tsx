@@ -243,7 +243,7 @@ export function HomePage() {
 					<ActionButton
 						layout="iconOnly"
 						size="large"
-						className="mx-auto size-16 rounded-full bg-bg-positive-solid text-primary-foreground hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed"
+						className="mx-auto size-16 rounded-full bg-bg-positive-solid text-primary-foreground hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed disabled:bg-bg-positive-solid/40 disabled:[--seed-icon-color:var(--seed-color-palette-static-white)]"
 						disabled={!canCall || outgoing.isPending}
 						onClick={startCall}
 						aria-label="전화 걸기"
