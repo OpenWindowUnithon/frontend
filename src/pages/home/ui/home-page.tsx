@@ -221,12 +221,7 @@ export function HomePage() {
 							ref={hapticTrigger}
 							type="button"
 							className="mx-auto grid size-[68px] touch-manipulation appearance-none grid-rows-[38px_12px] content-center place-items-center rounded-full border-0 bg-secondary p-0 text-foreground shadow-none transition select-none active:scale-95 active:bg-bg-neutral-weak-pressed"
-							onPointerDown={(event) => {
-								if (event.button === 0) pressKey(number);
-							}}
-							onClick={(event) => {
-								if (event.detail === 0) pressKey(number);
-							}}
+							onClick={() => pressKey(number)}
 							aria-label={number}
 						>
 							<span
