@@ -3,7 +3,7 @@ import { Icon } from "@seed-design/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import type { CallRole } from "@/entities/call";
-import { snackbar } from "@/shared/lib";
+import { cn, snackbar } from "@/shared/lib";
 import { ActionButton, SeedAvatar as Avatar, IdentityPlaceholder } from "@/shared/ui";
 
 type JoinStatus =
@@ -68,14 +68,16 @@ export function JoinCall(props: JoinCallProps) {
 			? "상대방이 받지 않았어요"
 			: "통화가 취소됐어요";
 
-	if (incoming) {
+	if (incoming || outgoing) {
 		return (
 			<section
 				className="fixed inset-0 z-30 mx-auto flex w-full max-w-md flex-col items-center overflow-hidden bg-[radial-gradient(circle_at_50%_30%,#34445f_0%,#172033_42%,#090d14_100%)] px-6 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-[max(2.5rem,env(safe-area-inset-top))] text-center text-white"
-				aria-label="수신 전화"
+				aria-label={incoming ? "수신 전화" : "발신 전화"}
 			>
 				<div className="absolute top-1/4 size-72 rounded-full bg-white/5 blur-3xl" aria-hidden />
-				<p className="relative text-base font-medium text-white/70">수신 전화</p>
+				<p className="relative text-base font-medium text-white/70">
+					{incoming ? "수신 전화" : "발신 전화"}
+				</p>
 				<div className="relative mt-16">
 					<span
 						className="absolute inset-0 animate-ping rounded-full bg-white/10 [animation-duration:2.4s]"
@@ -91,9 +93,16 @@ export function JoinCall(props: JoinCallProps) {
 				{props.contactName !== props.phone && (
 					<p className="relative mt-2 text-lg text-white/60">{props.phone}</p>
 				)}
-				<p className="relative mt-4 text-sm text-white/50">전화가 왔습니다</p>
+				<p className="relative mt-4 text-sm text-white/50">
+					{incoming ? "전화가 왔습니다" : "연결 중…"}
+				</p>
 
-				<div className="relative mt-auto grid w-full max-w-xs grid-cols-2 gap-16 pt-16">
+				<div
+					className={cn(
+						"relative mt-auto grid w-full max-w-xs pt-16",
+						incoming ? "grid-cols-2 gap-16" : "place-items-center",
+					)}
+				>
 					<div className="flex flex-col items-center gap-3">
 						<ActionButton
 							layout="iconOnly"
@@ -103,27 +112,29 @@ export function JoinCall(props: JoinCallProps) {
 							loading={props.rejecting}
 							disabled={busy}
 							onClick={() => void props.onReject()}
-							aria-label="전화 거절"
+							aria-label={incoming ? "전화 거절" : "전화 취소"}
 						>
 							<Icon svg={<IconPhoneXmarkFill />} />
 						</ActionButton>
-						<span className="text-sm font-medium">거절</span>
+						<span className="text-sm font-medium">{incoming ? "거절" : "취소"}</span>
 					</div>
-					<div className="flex flex-col items-center gap-3">
-						<ActionButton
-							layout="iconOnly"
-							variant="neutralSolid"
-							size="large"
-							className="size-18 rounded-full bg-bg-positive-solid !text-white hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed"
-							loading={props.accepting}
-							disabled={busy}
-							onClick={() => void props.onAccept()}
-							aria-label="전화 수락"
-						>
-							<Icon svg={<IconPhoneFill className="!text-white" />} />
-						</ActionButton>
-						<span className="text-sm font-medium">수락</span>
-					</div>
+					{incoming && (
+						<div className="flex flex-col items-center gap-3">
+							<ActionButton
+								layout="iconOnly"
+								variant="neutralSolid"
+								size="large"
+								className="size-18 rounded-full bg-bg-positive-solid !text-white hover:bg-bg-positive-solid-pressed active:bg-bg-positive-solid-pressed"
+								loading={props.accepting}
+								disabled={busy}
+								onClick={() => void props.onAccept()}
+								aria-label="전화 수락"
+							>
+								<Icon svg={<IconPhoneFill className="!text-white" />} />
+							</ActionButton>
+							<span className="text-sm font-medium">수락</span>
+						</div>
+					)}
 				</div>
 			</section>
 		);
@@ -153,14 +164,6 @@ export function JoinCall(props: JoinCallProps) {
 				</>
 			)}
 
-			{outgoing && (
-				<>
-					<LoadingDots />
-					<h3 className="mt-5 text-2xl font-bold">상대방에게 전화를 거는 중...</h3>
-					<p className="mt-3 text-base text-muted-foreground">상대방의 응답을 기다리고 있어요.</p>
-				</>
-			)}
-
 			{props.status === "connecting" && (
 				<>
 					<LoadingDots />
@@ -177,19 +180,6 @@ export function JoinCall(props: JoinCallProps) {
 			)}
 
 			<div className="mt-auto w-full max-w-sm pt-10">
-				{outgoing && (
-					<ActionButton
-						variant="neutralOutline"
-						size="large"
-						className="w-full text-destructive"
-						loading={props.rejecting}
-						disabled={busy}
-						onClick={() => void props.onReject()}
-					>
-						통화 취소
-					</ActionButton>
-				)}
-
 				{(props.status === "connecting" || props.status === "reconnecting") && (
 					<ActionButton
 						variant="neutralOutline"

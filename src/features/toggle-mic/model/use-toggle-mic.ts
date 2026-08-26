@@ -9,11 +9,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type MicState = "off" | "on";
 
-/** Publishes/unpublishes the local mic track on first use — matches the backend token grant (HEARING only can publish). */
+/** Starts the HEARING participant's mic when the call opens, then lets them mute/unmute it. */
 export function useToggleMic(room: Room | null) {
 	const [state, setState] = useState<MicState>("off");
 	const trackRef = useRef<LocalAudioTrack | null>(null);
 	const powerOperationRef = useRef<Promise<void>>(Promise.resolve());
+	const autoStartedRoomRef = useRef<Room | null>(null);
 	const syncWithRoom = useCallback(() => {
 		if (!room) {
 			trackRef.current = null;
@@ -69,13 +70,17 @@ export function useToggleMic(room: Room | null) {
 		if (!room) return;
 		room.on(RoomEvent.LocalTrackPublished, syncWithRoom);
 		room.on(RoomEvent.LocalTrackUnpublished, syncWithRoom);
+		if (autoStartedRoomRef.current !== room) {
+			autoStartedRoomRef.current = room;
+			void togglePower();
+		}
 
 		return () => {
 			room.off(RoomEvent.LocalTrackPublished, syncWithRoom);
 			room.off(RoomEvent.LocalTrackUnpublished, syncWithRoom);
 			trackRef.current?.stop();
 		};
-	}, [room, syncWithRoom]);
+	}, [room, syncWithRoom, togglePower]);
 
 	return { state, togglePower };
 }
