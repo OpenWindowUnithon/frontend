@@ -1,10 +1,8 @@
 import { apiClient } from "@/shared/api";
 
 const MAX_SAMPLES_PER_WORD = 10;
-// Calibrated against the current server reference set: 0.6 rejected most valid repetitions; 2.3
-// accepts 93/130 leave-one-out samples with no observed cross-word matches. Keep this conservative
-// because live rolling windows also include gesture transitions that the saved samples do not.
-export const DEFAULT_DTW_THRESHOLD = 2.3;
+// Favor recall for live rolling windows, which include gesture transitions unlike saved samples.
+export const DEFAULT_DTW_THRESHOLD = 3;
 
 type ReferenceStore = Record<string, number[][][]>;
 
