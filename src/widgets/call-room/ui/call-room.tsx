@@ -391,19 +391,21 @@ function ConversationLog({
 	timeline,
 	timelineVersion,
 	placeholder,
+	draft = null,
 }: {
 	timeline: TimelineItem[];
 	timelineVersion: string;
 	placeholder: string;
+	draft?: string | null;
 }) {
 	const bottomRef = useRef<HTMLDivElement>(null);
 	const autoScroll = useRef(getCallPreferences().captionAutoScroll);
 
 	useEffect(() => {
-		if (timelineVersion && autoScroll.current) {
+		if ((timelineVersion || draft) && autoScroll.current) {
 			bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 		}
-	}, [timelineVersion]);
+	}, [timelineVersion, draft]);
 
 	return (
 		<div
@@ -412,7 +414,7 @@ function ConversationLog({
 			aria-live="polite"
 			role="log"
 		>
-			{timeline.length === 0 && <p className="text-muted-foreground">{placeholder}</p>}
+			{timeline.length === 0 && !draft && <p className="text-muted-foreground">{placeholder}</p>}
 			{timeline.map((item) =>
 				item.kind === "caption" ? (
 					<Caption caption={item.caption} align={item.align} key={`caption-${item.caption.id}`} />
@@ -425,6 +427,13 @@ function ConversationLog({
 						</div>
 					</div>
 				),
+			)}
+			{draft && (
+				<div className="flex justify-end">
+					<div className="w-fit max-w-[85%] rounded-3xl rounded-tr-lg border border-dashed border-primary/40 bg-accent/60 px-5 py-3.5 text-accent-foreground">
+						<p className="whitespace-pre-wrap break-words text-lg font-medium leading-7">{draft}</p>
+					</div>
+				</div>
 			)}
 			<div ref={bottomRef} />
 		</div>
@@ -486,6 +495,7 @@ export function CallRoom(props: CallRoomProps) {
 	const [communication, setCommunication] = useState<CommunicationMode>(props.communication);
 	const [textDraft, setTextDraft] = useState("");
 	const [messages, setMessages] = useState<TextMessage[]>([]);
+	const [signDraft, setSignDraft] = useState<string | null>(null);
 	const captions = useReceiveCaptions(props.room);
 	const incomingChat = useIncomingChatCaptions(props.room);
 	const captionGroups =
@@ -565,6 +575,7 @@ export function CallRoom(props: CallRoomProps) {
 						timeline={timeline}
 						timelineVersion={timelineVersion}
 						placeholder="수어로 말하면 이곳에 실시간으로 표시돼요."
+						draft={signDraft}
 					/>
 					<div
 						className="absolute right-4 top-3 aspect-3/4 w-24 overflow-hidden rounded-2xl border border-border shadow-lg sm:w-28"
@@ -574,6 +585,7 @@ export function CallRoom(props: CallRoomProps) {
 							room={props.room}
 							captions={captions}
 							pip
+							onDraftChange={setSignDraft}
 							onSentence={(text) => {
 								setMessages((items) => [...items, { id: Date.now(), text, state: "sent" }]);
 							}}

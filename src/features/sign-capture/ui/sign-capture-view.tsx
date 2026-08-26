@@ -114,6 +114,13 @@ function ActiveSignBadge({ activeSign }: { activeSign: RecognizedSign | null }) 
 	);
 }
 
+function getDraftText(words: string[], activeSign: RecognizedSign | null) {
+	const candidate = activeSign?.label;
+	return (
+		[...words, ...(candidate && words.at(-1) !== candidate ? [candidate] : [])].join(" ") || null
+	);
+}
+
 // Always-on technical readout of what the recognizer is actually seeing -- the closest DTW
 // reference (even above threshold, so a near-miss custom word is visible instead of the
 // recognizer just looking silently broken).
@@ -500,6 +507,7 @@ export function SignCaptureView({
 	compact = false,
 	pip = false,
 	onSentence,
+	onDraftChange,
 }: {
 	room?: Room | null;
 	captions?: CaptionType[];
@@ -507,6 +515,7 @@ export function SignCaptureView({
 	compact?: boolean;
 	pip?: boolean;
 	onSentence?: (text: string) => void;
+	onDraftChange?: (text: string | null) => void;
 }) {
 	const {
 		videoRef,
@@ -543,6 +552,13 @@ export function SignCaptureView({
 	} = useSignCapture(room, captions, onSentence);
 
 	const [showGuide, setShowGuide] = useState(false);
+	const draftText = getDraftText(wordBuffer, activeSign);
+
+	useEffect(() => {
+		onDraftChange?.(draftText);
+	}, [draftText, onDraftChange]);
+
+	useEffect(() => () => onDraftChange?.(null), [onDraftChange]);
 
 	if (pip) {
 		return (
