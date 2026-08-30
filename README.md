@@ -1,8 +1,8 @@
 # frontend
 
-Frontend hackathon starter: Bun · Vite · React 19 · TanStack Router/Query ·
-Tailwind v4 · Feature-Sliced Design, with Biome + Steiger enforced via a
-pre-commit hook.
+
+> [!NOTE]
+> 🏆 숭실대학교 연합해커톤 UNITHON 우수상 수상
 
 ## Quick start
 
