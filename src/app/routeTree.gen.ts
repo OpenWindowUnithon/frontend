@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CallRouteImport } from './routes/call'
+import { Route as LandingRouteImport } from './routes/landing'
 import { Route as LobbyRouteImport } from './routes/lobby'
 import { Route as MyRouteImport } from './routes/my'
 import { Route as RecentRouteImport } from './routes/recent'
@@ -23,6 +24,11 @@ const IndexRoute = IndexRouteImport.update({
 const CallRoute = CallRouteImport.update({
   id: '/call',
   path: '/call',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LandingRoute = LandingRouteImport.update({
+  id: '/landing',
+  path: '/landing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LobbyRoute = LobbyRouteImport.update({
@@ -44,6 +50,7 @@ const RecentRoute = RecentRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/landing': typeof LandingRoute
   '/lobby': typeof LobbyRoute
   '/my': typeof MyRoute
   '/recent': typeof RecentRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/landing': typeof LandingRoute
   '/lobby': typeof LobbyRoute
   '/my': typeof MyRoute
   '/recent': typeof RecentRoute
@@ -59,21 +67,23 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/call': typeof CallRoute
+  '/landing': typeof LandingRoute
   '/lobby': typeof LobbyRoute
   '/my': typeof MyRoute
   '/recent': typeof RecentRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/call' | '/lobby' | '/my' | '/recent'
+  fullPaths: '/' | '/call' | '/landing' | '/lobby' | '/my' | '/recent'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/call' | '/lobby' | '/my' | '/recent'
-  id: '__root__' | '/' | '/call' | '/lobby' | '/my' | '/recent'
+  to: '/' | '/call' | '/landing' | '/lobby' | '/my' | '/recent'
+  id: '__root__' | '/' | '/call' | '/landing' | '/lobby' | '/my' | '/recent'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CallRoute: typeof CallRoute
+  LandingRoute: typeof LandingRoute
   LobbyRoute: typeof LobbyRoute
   MyRoute: typeof MyRoute
   RecentRoute: typeof RecentRoute
@@ -93,6 +103,13 @@ declare module '@tanstack/react-router' {
       path: '/call'
       fullPath: '/call'
       preLoaderRoute: typeof CallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/landing': {
+      id: '/landing'
+      path: '/landing'
+      fullPath: '/landing'
+      preLoaderRoute: typeof LandingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lobby': {
@@ -122,6 +139,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CallRoute: CallRoute,
+  LandingRoute: LandingRoute,
   LobbyRoute: LobbyRoute,
   MyRoute: MyRoute,
   RecentRoute: RecentRoute,
